@@ -735,6 +735,11 @@ public class MockPlayer implements Player {
   }
 
   @Override
+  public void setVideoDelayMS(long delayMS) {
+
+  }
+
+  @Override
   public void increaseDeviceVolume(@C.VolumeFlags int flags) {
     deviceVolume += 1;
     checkNotNull(conditionVariables.get(METHOD_INCREASE_DEVICE_VOLUME_WITH_FLAGS)).open();

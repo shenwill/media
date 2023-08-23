@@ -246,6 +246,7 @@ public interface Renderer extends PlayerMessage.Target {
    * renderers. These custom constants must be greater than or equal to this value.
    */
   int MSG_CUSTOM_BASE = 10000;
+  int MSG_SET_VIDEO_DELAY_US = MSG_CUSTOM_BASE + 1;
 
   /**
    * The renderer states. One of {@link #STATE_DISABLED}, {@link #STATE_ENABLED} or {@link

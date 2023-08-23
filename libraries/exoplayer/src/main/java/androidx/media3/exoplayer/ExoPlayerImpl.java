@@ -30,6 +30,7 @@ import static androidx.media3.exoplayer.Renderer.MSG_SET_CHANGE_FRAME_RATE_STRAT
 import static androidx.media3.exoplayer.Renderer.MSG_SET_PREFERRED_AUDIO_DEVICE;
 import static androidx.media3.exoplayer.Renderer.MSG_SET_SCALING_MODE;
 import static androidx.media3.exoplayer.Renderer.MSG_SET_SKIP_SILENCE_ENABLED;
+import static androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_DELAY_US;
 import static androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_EFFECTS;
 import static androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_FRAME_METADATA_LISTENER;
 import static androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT;
@@ -1806,6 +1807,10 @@ import java.util.concurrent.TimeoutException;
     if (streamVolumeManager != null) {
       streamVolumeManager.decreaseVolume(flags);
     }
+  }
+
+  public void setVideoDelayMS(long delayMS) {
+    sendRendererMessage(C.TRACK_TYPE_VIDEO, MSG_SET_VIDEO_DELAY_US, delayMS * 1000);
   }
 
   /**

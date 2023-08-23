@@ -178,6 +178,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   private long totalVideoFrameProcessingOffsetUs;
   private int videoFrameProcessingOffsetCount;
   private long lastFrameReleaseTimeNs;
+  private long videoDelayUs = 0;
 
   private VideoSize decodedVideoSize;
   @Nullable private VideoSize reportedVideoSize;
@@ -742,6 +743,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
             releaseCodec();
           }
         }
+        break;
+      case MSG_SET_VIDEO_DELAY_US:
+        this.videoDelayUs = (long) message;
         break;
       case MSG_SET_VIDEO_EFFECTS:
         @SuppressWarnings("unchecked")
@@ -1384,7 +1388,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     // Calculate how early we are. In other words, the realtime duration that needs to elapse whilst
     // the renderer is started before the frame should be rendered. A negative value means that
     // we're already late.
-    long earlyUs = (long) ((bufferPresentationTimeUs - positionUs) / playbackSpeed);
+    long earlyUs = (long) ((bufferPresentationTimeUs - positionUs + videoDelayUs) / playbackSpeed);
     if (isStarted) {
       // Account for the elapsed time since the start of this iteration of the rendering loop.
       earlyUs -= elapsedRealtimeNowUs - elapsedRealtimeUs;

@@ -1278,6 +1278,11 @@ public class SimpleExoPlayer extends BasePlayer
     player.setDeviceVolume(volume, flags);
   }
 
+  public void setVideoDelayMS(long delayMS) {
+    blockUntilConstructorFinished();
+    player.setVideoDelayMS(delayMS);
+  }
+
   /**
    * @deprecated Use {@link #increaseDeviceVolume(int)} instead.
    */

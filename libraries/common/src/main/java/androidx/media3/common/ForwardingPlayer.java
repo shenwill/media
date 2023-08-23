@@ -872,6 +872,11 @@ public class ForwardingPlayer implements Player {
     player.setDeviceVolume(volume, flags);
   }
 
+  @Override
+  public void setVideoDelayMS(long delayMS) {
+    player.setVideoDelayMS(delayMS);
+  }
+
   /**
    * @deprecated Use {@link #increaseDeviceVolume(int)} instead.
    */

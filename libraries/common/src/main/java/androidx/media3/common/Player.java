@@ -3344,6 +3344,8 @@ public interface Player {
   @Deprecated
   void increaseDeviceVolume();
 
+  void setVideoDelayMS(long delayMS);
+
   /**
    * Increases the volume of the device.
    *

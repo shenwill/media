@@ -1736,6 +1736,11 @@ public class MediaController implements Player {
   }
 
   @Override
+  public void setVideoDelayMS(long delayMS) {
+
+  }
+
+  @Override
   public final void increaseDeviceVolume(@C.VolumeFlags int flags) {
     verifyApplicationThread();
     if (!isConnected()) {

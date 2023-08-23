@@ -400,6 +400,11 @@ public class StubPlayer extends BasePlayer {
   }
 
   @Override
+  public void setVideoDelayMS(long delayMS) {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
   public void increaseDeviceVolume(@C.VolumeFlags int flags) {
     throw new UnsupportedOperationException();
   }
