@@ -1173,7 +1173,13 @@ public final class DefaultAudioSink implements AudioSink {
       }
       if (e.isRecoverable) {
         // Change to the audio capabilities supported by all the devices during the error recovery.
-        audioCapabilities = DEFAULT_AUDIO_CAPABILITIES;
+        // But DEFAULT_AUDIO_CAPABILITIES causes failure in case AC3 to PCM decoding not supported.
+        // When HDMI switches display mode in audio passthrough mode, writing audio data will fail,
+        // and the recovery doesn't bring it back to work.
+        // This fix is not ideal. The ideal fix is supposed to bring audio track back to work after HDMI switches.
+        if (configuration.outputMode != OUTPUT_MODE_PASSTHROUGH) {
+          audioCapabilities = DEFAULT_AUDIO_CAPABILITIES;
+        }
         throw e; // Do not delay the exception if it can be recovered at higher level.
       }
       writeExceptionPendingExceptionHolder.throwExceptionIfDeadlineIsReached(e);
