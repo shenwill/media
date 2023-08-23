@@ -15,6 +15,7 @@
  */
 package androidx.media3.extractor.text.ssa;
 
+import static androidx.media3.common.text.Cue.DIMEN_UNSET;
 import static androidx.media3.common.text.Cue.LINE_TYPE_FRACTION;
 import static androidx.media3.common.util.Util.castNonNull;
 
@@ -97,8 +98,8 @@ public final class SsaParser implements SubtitleParser {
    *     {@code [Script Info]} and optional {@code [V4+ Styles]} section.
    */
   public SsaParser(@Nullable List<byte[]> initializationData) {
-    screenWidth = Cue.DIMEN_UNSET;
-    screenHeight = Cue.DIMEN_UNSET;
+    screenWidth = DIMEN_UNSET;
+    screenHeight = DIMEN_UNSET;
     parsableByteArray = new ParsableByteArray();
 
     if (initializationData != null && !initializationData.isEmpty()) {
@@ -179,6 +180,10 @@ public final class SsaParser implements SubtitleParser {
         Log.i(TAG, "[V4 Styles] are not supported");
       } else if ("[Events]".equalsIgnoreCase(currentLine)) {
         // We've reached the [Events] section, so the header is over.
+        if (screenHeight == 288 && screenWidth == 384) {
+          screenHeight = DIMEN_UNSET;
+          screenWidth = DIMEN_UNSET;
+        }
         return;
       }
     }
@@ -374,9 +379,9 @@ public final class SsaParser implements SubtitleParser {
             /* end= */ spannableText.length(),
             SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE);
       }
-      if (style.fontSize != Cue.DIMEN_UNSET && screenHeight != Cue.DIMEN_UNSET) {
+      if (style.fontSize != DIMEN_UNSET && screenHeight != DIMEN_UNSET) {
         cue.setTextSize(
-            style.fontSize / screenHeight, Cue.TEXT_SIZE_TYPE_FRACTIONAL_IGNORE_PADDING);
+            style.fontSize / screenHeight / 1.2f, Cue.TEXT_SIZE_TYPE_FRACTIONAL_IGNORE_PADDING);
       }
       if (style.bold && style.italic) {
         spannableText.setSpan(
@@ -426,8 +431,8 @@ public final class SsaParser implements SubtitleParser {
         .setLineAnchor(toLineAnchor(alignment));
 
     if (styleOverrides.position != null
-        && screenHeight != Cue.DIMEN_UNSET
-        && screenWidth != Cue.DIMEN_UNSET) {
+        && screenHeight != DIMEN_UNSET
+        && screenWidth != DIMEN_UNSET) {
       cue.setPosition(styleOverrides.position.x / screenWidth);
       cue.setLine(styleOverrides.position.y / screenHeight, LINE_TYPE_FRACTION);
     } else {
@@ -516,7 +521,7 @@ public final class SsaParser implements SubtitleParser {
         return 1.0f - DEFAULT_MARGIN;
       case Cue.TYPE_UNSET:
       default:
-        return Cue.DIMEN_UNSET;
+        return DIMEN_UNSET;
     }
   }
 

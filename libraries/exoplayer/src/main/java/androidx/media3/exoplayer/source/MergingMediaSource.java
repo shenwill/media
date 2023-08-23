@@ -177,6 +177,10 @@ public final class MergingMediaSource extends CompositeMediaSource<Integer> {
     mediaSources[0].updateMediaItem(mediaItem);
   }
 
+  public MediaSource getMediaSource() {
+    return mediaSources.length > 0 ? mediaSources[0] : null;
+  }
+
   @Override
   protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
     super.prepareSourceInternal(mediaTransferListener);

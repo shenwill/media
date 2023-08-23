@@ -815,7 +815,7 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
     } else if (dispatchMediaKeyEvent(event) || super.dispatchKeyEvent(event)) {
       // The key event was handled as a media key or by the super class. We should also show the
       // controller, or extend its show timeout if already visible.
-      maybeShowController(true);
+      // maybeShowController(true);
       handled = true;
     } else if (isDpadKey && useController()) {
       // The key event wasn't handled, but we should extend the controller's show timeout.

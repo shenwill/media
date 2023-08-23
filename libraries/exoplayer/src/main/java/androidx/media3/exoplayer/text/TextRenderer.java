@@ -58,7 +58,7 @@ import org.checkerframework.dataflow.qual.SideEffectFree;
  * is delegated to a {@link TextOutput}.
  */
 @UnstableApi
-public final class TextRenderer extends BaseRenderer implements Callback {
+public class TextRenderer extends BaseRenderer implements Callback {
 
   private static final String TAG = "TextRenderer";
 
