@@ -196,5 +196,10 @@ public final class MediaParserChunkExtractor implements ChunkExtractor {
     public void seekMap(SeekMap seekMap) {
       // Do nothing.
     }
+
+    @Override
+    public void chapterStartTimes(long[] startTimes) {
+      // Do nothing.
+    }
   }
 }

@@ -96,6 +96,7 @@ import androidx.media3.extractor.TrackOutput;
               .setHeight(avcConfig.height)
               .setPixelWidthHeightRatio(avcConfig.pixelWidthHeightRatio)
               .setInitializationData(avcConfig.initializationData)
+              .setFrameRate(avcConfig.frameRate < 0 ? Format.NO_VALUE : avcConfig.frameRate)
               .build();
       output.format(format);
       hasOutputFormat = true;

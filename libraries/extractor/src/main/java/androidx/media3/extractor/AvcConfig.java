@@ -31,6 +31,8 @@ import java.util.List;
 @UnstableApi
 public final class AvcConfig {
 
+  public final float frameRate;
+
   /**
    * Parses AVC configuration data.
    *
@@ -62,6 +64,7 @@ public final class AvcConfig {
       @C.ColorRange int colorRange = Format.NO_VALUE;
       @C.ColorTransfer int colorTransfer = Format.NO_VALUE;
       float pixelWidthHeightRatio = 1;
+      float frameRate = -1;
       @Nullable String codecs = null;
       if (numSequenceParameterSets > 0) {
         byte[] sps = initializationData.get(0);
@@ -74,6 +77,7 @@ public final class AvcConfig {
         colorRange = spsData.colorRange;
         colorTransfer = spsData.colorTransfer;
         pixelWidthHeightRatio = spsData.pixelWidthHeightRatio;
+        frameRate = spsData.frameRate;
         codecs =
             CodecSpecificDataUtil.buildAvcCodecString(
                 spsData.profileIdc, spsData.constraintsFlagsAndReservedZero2Bits, spsData.levelIdc);
@@ -88,6 +92,7 @@ public final class AvcConfig {
           colorRange,
           colorTransfer,
           pixelWidthHeightRatio,
+          frameRate,
           codecs);
     } catch (ArrayIndexOutOfBoundsException e) {
       throw ParserException.createForMalformedContainer("Error parsing AVC config", e);
@@ -145,6 +150,7 @@ public final class AvcConfig {
       @C.ColorRange int colorRange,
       @C.ColorTransfer int colorTransfer,
       float pixelWidthHeightRatio,
+      float frameRate,
       @Nullable String codecs) {
     this.initializationData = initializationData;
     this.nalUnitLengthFieldLength = nalUnitLengthFieldLength;
@@ -154,6 +160,7 @@ public final class AvcConfig {
     this.colorRange = colorRange;
     this.colorTransfer = colorTransfer;
     this.pixelWidthHeightRatio = pixelWidthHeightRatio;
+    this.frameRate = frameRate;
     this.codecs = codecs;
   }
 

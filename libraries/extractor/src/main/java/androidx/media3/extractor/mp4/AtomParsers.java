@@ -1142,6 +1142,7 @@ import java.util.List;
     int height = parent.readUnsignedShort();
     boolean pixelWidthHeightRatioFromPasp = false;
     float pixelWidthHeightRatio = 1;
+    float frameRate = -1;
     parent.skipBytes(50);
 
     int childPosition = parent.getPosition();
@@ -1204,6 +1205,7 @@ import java.util.List;
         if (!pixelWidthHeightRatioFromPasp) {
           pixelWidthHeightRatio = avcConfig.pixelWidthHeightRatio;
         }
+        frameRate = avcConfig.frameRate;
         codecs = avcConfig.codecs;
         colorSpace = avcConfig.colorSpace;
         colorRange = avcConfig.colorRange;
@@ -1370,6 +1372,7 @@ import java.util.List;
             .setProjectionData(projectionData)
             .setStereoMode(stereoMode)
             .setInitializationData(initializationData)
+            .setFrameRate(frameRate < 0 ? Format.NO_VALUE : frameRate)
             .setDrmInitData(drmInitData);
     if (colorSpace != Format.NO_VALUE
         || colorRange != Format.NO_VALUE

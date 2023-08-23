@@ -65,4 +65,9 @@ public final class StartOffsetExtractorOutput implements ExtractorOutput {
           }
         });
   }
+
+  @Override
+  public void chapterStartTimes(long[] startTimes) {
+
+  }
 }

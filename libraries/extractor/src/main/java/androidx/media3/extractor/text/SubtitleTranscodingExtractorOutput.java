@@ -68,4 +68,9 @@ import androidx.media3.extractor.TrackOutput;
   public void seekMap(SeekMap seekMap) {
     delegate.seekMap(seekMap);
   }
+
+  @Override
+  public void chapterStartTimes(long[] startTimes) {
+
+  }
 }
