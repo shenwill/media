@@ -42,9 +42,11 @@ import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -84,6 +86,9 @@ public final class SsaParser implements SubtitleParser {
    */
   private float screenHeight;
 
+  private boolean bypass = false;
+  private boolean inMatroska = false;
+
   public SsaParser() {
     this(/* initializationData= */ null);
   }
@@ -98,6 +103,7 @@ public final class SsaParser implements SubtitleParser {
    *     {@code [Script Info]} and optional {@code [V4+ Styles]} section.
    */
   public SsaParser(@Nullable List<byte[]> initializationData) {
+    inMatroska = initializationData != null && initializationData.size() > 1;
     screenWidth = DIMEN_UNSET;
     screenHeight = DIMEN_UNSET;
     parsableByteArray = new ParsableByteArray();
@@ -116,6 +122,7 @@ public final class SsaParser implements SubtitleParser {
       haveInitializationData = false;
       dialogueFormatFromInitializationData = null;
     }
+    bypass = onInit(this, initializationData);
   }
 
   @Override
@@ -124,6 +131,7 @@ public final class SsaParser implements SubtitleParser {
   @Nullable
   @Override
   public ImmutableList<CuesWithTiming> parse(byte[] data, int offset, int length) {
+    onData(this, data, offset, length);
     List<List<Cue>> cues = new ArrayList<>();
     List<Long> startTimesUs = new ArrayList<>();
 
@@ -151,6 +159,10 @@ public final class SsaParser implements SubtitleParser {
       cuesWithStartTimeAndDuration.add(
           new CuesWithTiming(cuesForThisStartTime, startTimeUs, durationUs));
     }
+    if (bypass) {
+      return ImmutableList.of();
+    }
+
     return cuesWithStartTimeAndDuration.build();
   }
 
@@ -328,6 +340,10 @@ public final class SsaParser implements SubtitleParser {
             .replace("\\h", "\u00A0");
     Cue cue = createCue(text, style, styleOverrides, screenWidth, screenHeight);
 
+    // MatroskaExtractor does not set startTimeUs at all
+    if (inMatroska) {
+      startTimeUs = 0;
+    }
     int startTimeIndex = addCuePlacerholderByTime(startTimeUs, cueTimesUs, cues);
     int endTimeIndex = addCuePlacerholderByTime(endTimeUs, cueTimesUs, cues);
     // Iterate on cues from startTimeIndex until endTimeIndex, adding the current cue.
@@ -550,5 +566,39 @@ public final class SsaParser implements SubtitleParser {
         insertionIndex,
         insertionIndex == 0 ? new ArrayList<>() : new ArrayList<>(cues.get(insertionIndex - 1)));
     return insertionIndex;
+  }
+
+  private static Set<SsaParserListener> sListeners = new HashSet(1);
+  public static void registerListener(SsaParserListener listener) {
+    sListeners.clear();
+    sListeners.add(listener);
+    assert(sListeners.size() == 1);
+  }
+
+  public static boolean onInit(Object idObject, List<byte[]> initData) {
+    boolean bypassParsing = false;
+    for (SsaParserListener listener : sListeners) {
+      bypassParsing = listener.onInit(idObject, initData, true);
+    }
+    return bypassParsing && sListeners.size() > 0;
+  }
+
+  public static void onData(Object idObject, byte[] bytes, int offset, int length) {
+    for (SsaParserListener listener : sListeners) {
+      listener.onData(idObject, bytes, offset, length);
+    }
+  }
+
+  public static void onReset(Object idObject) {
+    for (SsaParserListener listener : sListeners) {
+      listener.onReset(idObject);
+    }
+  }
+
+  public interface SsaParserListener {
+    boolean onInit(Object idObject, List<byte[]> dataList, boolean fromParser);
+    void onData(Object idObject, byte[] bytes, int offset, int length);
+    void onReset(Object idObject);
+    void onRelease(Object idObject);
   }
 }

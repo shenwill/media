@@ -41,6 +41,7 @@ import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
@@ -508,6 +509,10 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
       setClickable(true);
     }
     updateContentDescription();
+  }
+
+  public SurfaceView getSurfaceSubtitleView() {
+    return findViewById(R.id.surface_subtitle_view);
   }
 
   /**

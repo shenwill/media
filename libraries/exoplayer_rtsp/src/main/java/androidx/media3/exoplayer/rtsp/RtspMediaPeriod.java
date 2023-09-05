@@ -524,6 +524,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       // RTSP does not support seek map.
     }
 
+    @Override
+    public void chapterStartTimes(long[] startTimes) {
+
+    }
+
     // Loadable.Callback implementation.
 
     @Override

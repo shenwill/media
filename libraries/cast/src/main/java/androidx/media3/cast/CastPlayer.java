@@ -785,6 +785,11 @@ public final class CastPlayer extends BasePlayer {
   @Override
   public void increaseDeviceVolume() {}
 
+  @Override
+  public void setVideoDelayMS(long delayMS) {
+
+  }
+
   /** This method is not supported and does nothing. */
   @Override
   public void increaseDeviceVolume(@C.VolumeFlags int flags) {}

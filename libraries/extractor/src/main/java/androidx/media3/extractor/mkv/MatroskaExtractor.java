@@ -23,8 +23,10 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.annotation.ElementType.TYPE_USE;
 
+import android.content.Context;
 import android.util.Pair;
 import android.util.SparseArray;
+
 import androidx.annotation.CallSuper;
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
@@ -56,7 +58,15 @@ import androidx.media3.extractor.PositionHolder;
 import androidx.media3.extractor.SeekMap;
 import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.TrueHdSampleRechunker;
+
 import com.google.common.collect.ImmutableList;
+
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.RequiresNonNull;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
@@ -68,13 +78,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
-import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /** Extracts data from the Matroska and WebM container formats. */
 @UnstableApi
@@ -283,6 +292,16 @@ public class MatroskaExtractor implements Extractor {
   private static final int ID_WHITE_POINT_CHROMATICITY_Y = 0x55D8;
   private static final int ID_LUMNINANCE_MAX = 0x55D9;
   private static final int ID_LUMNINANCE_MIN = 0x55DA;
+  private static final int ID_ATTACHMENTS = 0x1941A469;
+  private static final int ID_ATTACHED_FILE = 0x61a7;
+  private static final int ID_FILE_DESCRIPTION = 0x467e;
+  private static final int ID_FILE_NAME = 0x466e;
+  private static final int ID_FILE_MEDIA_TYPE = 0x4660;
+  private static final int ID_FILE_DATA = 0x465c;
+  private static final int ID_FILE_UID = 0x46ae;
+  private static final int ID_FILE_REFERRAL = 0x4675;
+  private static final int ID_FILE_USED_START_TIME = 0x4661;
+  private static final int ID_FILE_USED_END_TIME = 0x4662;
   private static final int ID_EDITION_ENTRY = 0x45B9;
   private static final int ID_EDITION_UID = 0x45BC;
   private static final int ID_EDITION_FLAG_HIDDEN = 0x45BD;
@@ -445,6 +464,7 @@ public class MatroskaExtractor implements Extractor {
   private final VarintReader varintReader;
   private final SparseArray<Track> tracks;
   public final List<Edition> chapters;
+  public final List<AttachedFile> attachedFiles;
   private final boolean seekForCuesEnabled;
 
   // Temporary arrays.
@@ -466,6 +486,7 @@ public class MatroskaExtractor implements Extractor {
   private long durationTimecode = C.TIME_UNSET;
   private long durationUs = C.TIME_UNSET;
 
+  @Nullable private AttachedFile currentAttachedFile;
   // The track corresponding to the current TrackEntry element, or null.
   @Nullable private Track currentTrack;
 
@@ -536,6 +557,7 @@ public class MatroskaExtractor implements Extractor {
     varintReader = new VarintReader();
     tracks = new SparseArray<>();
     chapters = new ArrayList();
+    attachedFiles = new ArrayList();
     scratch = new ParsableByteArray(4);
     vorbisNumPageSamples = new ParsableByteArray(ByteBuffer.allocate(4).putInt(-1).array());
     seekEntryIdBytes = new ParsableByteArray(4);
@@ -611,6 +633,8 @@ public class MatroskaExtractor implements Extractor {
       case ID_SEEK_HEAD:
       case ID_SEEK:
       case ID_INFO:
+      case ID_ATTACHMENTS:
+      case ID_ATTACHED_FILE:
       case ID_CHAPTERS:
       case ID_EDITION_ENTRY:
       case ID_CHAPTER_ATOM:
@@ -682,8 +706,14 @@ public class MatroskaExtractor implements Extractor {
       case ID_CHAPTER_TIME_START:
       case ID_CHAPTER_FLAG_ENABLED:
       case ID_CHAPTER_FLAG_HIDDEN:
+      case ID_FILE_UID:
+      case ID_FILE_USED_START_TIME:
+      case ID_FILE_USED_END_TIME:
         return EbmlProcessor.ELEMENT_TYPE_UNSIGNED_INT;
       case ID_DOC_TYPE:
+      case ID_FILE_DESCRIPTION:
+      case ID_FILE_NAME:
+      case ID_FILE_MEDIA_TYPE:
       case ID_NAME:
       case ID_CODEC_ID:
       case ID_LANGUAGE:
@@ -699,6 +729,8 @@ public class MatroskaExtractor implements Extractor {
       case ID_CODEC_PRIVATE:
       case ID_PROJECTION_PRIVATE:
       case ID_BLOCK_ADDITIONAL:
+      case ID_FILE_DATA:
+      case ID_FILE_REFERRAL:
         return EbmlProcessor.ELEMENT_TYPE_BINARY;
       case ID_DURATION:
       case ID_FRAME_RATE:
@@ -729,7 +761,8 @@ public class MatroskaExtractor implements Extractor {
    */
   @CallSuper
   protected boolean isLevel1Element(int id) {
-    return id == ID_SEGMENT_INFO || id == ID_CLUSTER || id == ID_CUES || id == ID_TRACKS;
+    return id == ID_SEGMENT_INFO || id == ID_CLUSTER || id == ID_CUES || id == ID_TRACKS
+        || id == ID_ATTACHMENTS || id == ID_CHAPTERS;
   }
 
   /**
@@ -785,7 +818,15 @@ public class MatroskaExtractor implements Extractor {
       case ID_CONTENT_ENCRYPTION:
         getCurrentTrack(id).hasContentEncryption = true;
         break;
+      case ID_ATTACHMENTS:
+        Log.i(TAG, "MKV attachments starts.");
+        break;
+      case ID_ATTACHED_FILE:
+        currentAttachedFile = new AttachedFile();
+        break;
       case ID_CHAPTERS:
+        Log.i(TAG, "MKV chapters starts.");
+        break;
       case ID_EDITION_ENTRY:
         currentEdition = new Edition();
         break;
@@ -897,6 +938,15 @@ public class MatroskaExtractor implements Extractor {
           throw ParserException.createForMalformedContainer(
               "Combining encryption and compression is not supported", /* cause= */ null);
         }
+        break;
+      case ID_ATTACHED_FILE:
+        attachedFiles.add(currentAttachedFile);
+        onFontReady(this, currentAttachedFile, null);
+        currentAttachedFile = null;
+        break;
+      case ID_ATTACHMENTS:
+        Log.i(TAG, "MKV attachments done.");
+        onAttachmentsReady(this, attachedFiles);
         break;
       case ID_EDITION_ENTRY:
         chapters.add(currentEdition);
@@ -1179,6 +1229,15 @@ public class MatroskaExtractor implements Extractor {
       case ID_CHAPTER_FLAG_HIDDEN:
         currentChapterAtom.flagHidden = value == 1;
         break;
+      case ID_FILE_UID:
+        currentAttachedFile.fileUID = value;
+        break;
+      case ID_FILE_USED_START_TIME:
+        currentAttachedFile.fileUsedStartTime = value;
+        break;
+      case ID_FILE_USED_END_TIME:
+        currentAttachedFile.fileUsedEndTime = value;
+        break;
       default:
         break;
     }
@@ -1275,6 +1334,15 @@ public class MatroskaExtractor implements Extractor {
       case ID_CHAP_STRING:
         currentChapterDisplay.string = value;
         break;
+      case ID_FILE_DESCRIPTION:
+        currentAttachedFile.fileDescription = value;
+        break;
+      case ID_FILE_NAME:
+        currentAttachedFile.fileName = value;
+        break;
+      case ID_FILE_MEDIA_TYPE:
+        currentAttachedFile.fileMediaType = value;
+        break;
       default:
         break;
     }
@@ -1288,6 +1356,43 @@ public class MatroskaExtractor implements Extractor {
   @CallSuper
   protected void binaryElement(int id, int contentSize, ExtractorInput input) throws IOException {
     switch (id) {
+      case ID_FILE_REFERRAL:
+        currentAttachedFile.fileReferral = new byte[contentSize];
+        input.readFully(currentAttachedFile.fileReferral, 0, contentSize);
+        break;
+      case ID_FILE_DATA:
+        if (sContext != null && currentAttachedFile.fileMediaType.startsWith("font")) {
+          File file = sContext.getExternalCacheDir();
+          if (file == null) {
+            file = sContext.getCacheDir();
+          }
+          File fontsDir = new File(file, "ass_fonts");
+          if (!fontsDir.exists()) {
+            fontsDir.mkdirs();
+          }
+          try {
+            file = new File(fontsDir, currentAttachedFile.fileName);
+            if (file.exists()) {
+              file.delete();
+            }
+            byte[] buffer = new byte[1024];
+            FileOutputStream fileOutputStream = new FileOutputStream(file);
+            int count = 0, bytesRead = 0;
+            while (count < contentSize && bytesRead != C.RESULT_END_OF_INPUT) {
+              bytesRead = input.read(buffer, 0, Math.min(contentSize - count, buffer.length));
+              fileOutputStream.write(buffer, 0, bytesRead);
+              count += bytesRead;
+            }
+            fileOutputStream.flush();
+            fileOutputStream.close();
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          currentAttachedFile.fileData = file;
+        } else {
+          input.skipFully(contentSize);
+        }
+        break;
       case ID_SEEK_ID:
         Arrays.fill(seekEntryIdBytes.getData(), (byte) 0);
         input.readFully(seekEntryIdBytes.getData(), 4 - contentSize, contentSize);
@@ -1545,6 +1650,7 @@ public class MatroskaExtractor implements Extractor {
           Log.w(TAG, "Skipping subtitle sample with no duration.");
         } else {
           setSubtitleEndTime(track.codecId, blockDurationUs, subtitleSample.getData());
+          setSubtitleStartTimeForAss(track.codecId, blockTimeUs, subtitleSample.getData());
           // The Matroska spec doesn't clearly define whether subtitle samples are null-terminated
           // or the sample should instead be sized precisely. We truncate the sample at a null-byte
           // to gracefully handle null-terminated strings followed by garbage bytes.
@@ -1877,6 +1983,16 @@ public class MatroskaExtractor implements Extractor {
     System.arraycopy(endTimecode, 0, subtitleData, endTimecodeOffset, endTimecode.length);
   }
 
+  private static void setSubtitleStartTimeForAss(String codecId, long startTimeUs, byte[] subtitleData) {
+    if (CODEC_ID_ASS.equals(codecId)) {
+      byte[] timecode =
+          formatSubtitleTimecode(
+              startTimeUs, SSA_TIMECODE_FORMAT, SSA_TIMECODE_LAST_VALUE_SCALING_FACTOR);
+      int timecodeOffset = 10; //SSA_PREFIX_START_TIMECODE_OFFSET;
+      System.arraycopy(timecode, 0, subtitleData, timecodeOffset, timecode.length);
+    }
+  }
+
   /**
    * Formats {@code timeUs} using {@code timecodeFormat}, and sets it as the end timecode in {@code
    * subtitleSampleData}.
@@ -2112,6 +2228,17 @@ public class MatroskaExtractor implements Extractor {
     public void binaryElement(int id, int contentsSize, ExtractorInput input) throws IOException {
       MatroskaExtractor.this.binaryElement(id, contentsSize, input);
     }
+  }
+
+  public static final class AttachedFile {
+    public String fileDescription;
+    public String fileName;
+    public String fileMediaType;
+    public File fileData;
+    public long fileUID;
+    public byte[] fileReferral;
+    public long fileUsedStartTime;
+    public long fileUsedEndTime;
   }
 
   private static final class Edition {
@@ -2726,5 +2853,32 @@ public class MatroskaExtractor implements Extractor {
       }
       return codecPrivate;
     }
+  }
+
+  private static Set<MatroskaExtractorListener> sListeners = new HashSet(1);
+  private static Context sContext = null;
+
+  public static void registerListener(MatroskaExtractorListener listener, Context context) {
+    sListeners.clear();
+    sListeners.add(listener);
+    assert(sListeners.size() == 1);
+    sContext = context;
+  }
+
+  public static void onAttachmentsReady(Object idObject, List<AttachedFile> attachedFiles) {
+    for (MatroskaExtractorListener listener : sListeners) {
+      listener.onAttachmentsReady(idObject, attachedFiles);
+    }
+  }
+
+  public static void onFontReady(Object idObject, AttachedFile fontFile, byte[] bytes) {
+    for (MatroskaExtractorListener listener : sListeners) {
+      listener.onFontReady(idObject, fontFile, bytes);
+    }
+  }
+
+  public interface MatroskaExtractorListener {
+    void onAttachmentsReady(Object idObject, List<AttachedFile> attachedFiles);
+    void onFontReady(Object idObject, MatroskaExtractor.AttachedFile fontFile, byte[] bytes);
   }
 }
