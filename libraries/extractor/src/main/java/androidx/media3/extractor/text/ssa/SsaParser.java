@@ -86,8 +86,8 @@ public final class SsaParser implements SubtitleParser {
    */
   private float screenHeight;
 
-  private boolean bypass = false;
-  private boolean inMatroska = false;
+  private boolean bypassCueSheet;
+  private boolean assIsInMkv;
 
   public SsaParser() {
     this(/* initializationData= */ null);
@@ -103,7 +103,7 @@ public final class SsaParser implements SubtitleParser {
    *     {@code [Script Info]} and optional {@code [V4+ Styles]} section.
    */
   public SsaParser(@Nullable List<byte[]> initializationData) {
-    inMatroska = initializationData != null && initializationData.size() > 1;
+    assIsInMkv = initializationData != null && initializationData.size() > 1;
     screenWidth = DIMEN_UNSET;
     screenHeight = DIMEN_UNSET;
     parsableByteArray = new ParsableByteArray();
@@ -122,7 +122,7 @@ public final class SsaParser implements SubtitleParser {
       haveInitializationData = false;
       dialogueFormatFromInitializationData = null;
     }
-    bypass = onInit(this, initializationData);
+    bypassCueSheet = onInit(this, initializationData);
   }
 
   @Override
@@ -159,7 +159,7 @@ public final class SsaParser implements SubtitleParser {
       cuesWithStartTimeAndDuration.add(
           new CuesWithTiming(cuesForThisStartTime, startTimeUs, durationUs));
     }
-    if (bypass) {
+    if (bypassCueSheet) {
       return ImmutableList.of();
     }
 
@@ -340,8 +340,9 @@ public final class SsaParser implements SubtitleParser {
             .replace("\\h", "\u00A0");
     Cue cue = createCue(text, style, styleOverrides, screenWidth, screenHeight);
 
-    // MatroskaExtractor does not set startTimeUs at all
-    if (inMatroska) {
+    // In case ASS extracted from MKV, MatroskaExtractor not set startTimeUs at all, it always 0.
+    // startTimeUs in dialogueLines hacked to blockTimeUs by extractor before, restore it here.
+    if (assIsInMkv) {
       startTimeUs = 0;
     }
     int startTimeIndex = addCuePlacerholderByTime(startTimeUs, cueTimesUs, cues);
@@ -576,11 +577,11 @@ public final class SsaParser implements SubtitleParser {
   }
 
   public static boolean onInit(Object idObject, List<byte[]> initData) {
-    boolean bypassParsing = false;
+    boolean keepGoing = false;
     for (SsaParserListener listener : sListeners) {
-      bypassParsing = listener.onInit(idObject, initData, true);
+      keepGoing = listener.onInit(idObject, initData);
     }
-    return bypassParsing && sListeners.size() > 0;
+    return keepGoing && sListeners.size() > 0;
   }
 
   public static void onData(Object idObject, byte[] bytes, int offset, int length) {
@@ -596,7 +597,7 @@ public final class SsaParser implements SubtitleParser {
   }
 
   public interface SsaParserListener {
-    boolean onInit(Object idObject, List<byte[]> dataList, boolean fromParser);
+    boolean onInit(Object idObject, List<byte[]> dataList);
     void onData(Object idObject, byte[] bytes, int offset, int length);
     void onReset(Object idObject);
     void onRelease(Object idObject);

@@ -1650,6 +1650,7 @@ public class MatroskaExtractor implements Extractor {
           Log.w(TAG, "Skipping subtitle sample with no duration.");
         } else {
           setSubtitleEndTime(track.codecId, blockDurationUs, subtitleSample.getData());
+          // hack start time to pass out blockTimeUs
           setSubtitleStartTimeForAss(track.codecId, blockTimeUs, subtitleSample.getData());
           // The Matroska spec doesn't clearly define whether subtitle samples are null-terminated
           // or the sample should instead be sized precisely. We truncate the sample at a null-byte
