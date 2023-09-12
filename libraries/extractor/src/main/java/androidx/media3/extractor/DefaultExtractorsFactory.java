@@ -39,6 +39,7 @@ import androidx.media3.extractor.mp4.FragmentedMp4Extractor;
 import androidx.media3.extractor.mp4.Mp4Extractor;
 import androidx.media3.extractor.ogg.OggExtractor;
 import androidx.media3.extractor.png.PngExtractor;
+import androidx.media3.extractor.rmvb.RmvbExtractor;
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory;
 import androidx.media3.extractor.text.SubtitleParser;
 import androidx.media3.extractor.text.SubtitleTranscodingExtractor;
@@ -511,6 +512,10 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         break;
       case FileTypes.PNG:
         extractors.add(new PngExtractor());
+        break;
+      case FileTypes.RM:
+      case FileTypes.RMVB:
+        extractors.add(new RmvbExtractor());
         break;
       case FileTypes.WEBVTT:
       case FileTypes.UNKNOWN:

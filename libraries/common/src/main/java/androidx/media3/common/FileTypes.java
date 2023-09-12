@@ -62,7 +62,7 @@ public final class FileTypes {
   @Target(TYPE_USE)
   @IntDef({
     UNKNOWN, AC3, AC4, ADTS, AMR, FLAC, FLV, MATROSKA, MP3, MP4, OGG, PS, TS, WAV, WEBVTT, JPEG,
-    MIDI, AVI, PNG
+    MIDI, AVI, PNG, RM, RMVB
   })
   public @interface Type {}
 
@@ -122,6 +122,8 @@ public final class FileTypes {
 
   /** File type for the PNG format. */
   public static final int PNG = 17;
+  public static final int RM = 18;
+  public static final int RMVB = 19;
 
   @VisibleForTesting /* package */ static final String HEADER_CONTENT_TYPE = "Content-Type";
 
@@ -159,6 +161,8 @@ public final class FileTypes {
   private static final String EXTENSION_JPEG = ".jpeg";
   private static final String EXTENSION_AVI = ".avi";
   private static final String EXTENSION_PNG = ".png";
+  private static final String EXTENSION_RM = ".rm";
+  private static final String EXTENSION_RMVB = ".rmvb";
 
   private FileTypes() {}
 
@@ -295,6 +299,10 @@ public final class FileTypes {
       return FileTypes.AVI;
     } else if (filename.endsWith(EXTENSION_PNG)) {
       return FileTypes.PNG;
+    } else if (filename.endsWith(EXTENSION_RM)) {
+      return FileTypes.RM;
+    } else if (filename.endsWith(EXTENSION_RMVB)) {
+      return FileTypes.RMVB;
     } else {
       return FileTypes.UNKNOWN;
     }
