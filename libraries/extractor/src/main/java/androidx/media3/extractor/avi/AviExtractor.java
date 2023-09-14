@@ -54,7 +54,10 @@ public final class AviExtractor implements Extractor {
 
   public static final int FOURCC_RIFF = 0x46464952;
   public static final int FOURCC_AVI_ = 0x20495641; // AVI<space>
+  public static final int FOURCC_AVIX = 0x58495641;
   public static final int FOURCC_LIST = 0x5453494c;
+
+  public static final int FOURCC_rec = 0x20636572;
 
   @SuppressWarnings("ConstantCaseForConstants")
   public static final int FOURCC_avih = 0x68697661;
@@ -411,8 +414,11 @@ public final class AviExtractor implements Extractor {
     return null;
   }
 
+  // This function reads Movi chunks cross all RIFF-AVIX chunks
+  // RIFF-AVIX chunks expected "only contain LIST ‘movi’ data".
+  // https://web.archive.org/web/20070112225112/http://www.the-labs.com/Video/odmlff2-avidef.pdf
   private int readMoviChunks(ExtractorInput input) throws IOException {
-    if (input.getPosition() >= moviEnd) {
+    if (input.getPosition() >= input.getLength()) {
       return C.RESULT_END_OF_INPUT;
     } else if (currentChunkReader != null) {
       if (currentChunkReader.onChunkData(input)) {
@@ -426,13 +432,19 @@ public final class AviExtractor implements Extractor {
       if (chunkType == FOURCC_LIST) {
         scratch.setPosition(8);
         int listType = scratch.readLittleEndianInt();
-        input.skipFully(listType == FOURCC_movi ? 12 : 8);
+        input.skipFully(listType == FOURCC_movi || listType == FOURCC_rec ? 12 : 8);
         input.resetPeekPosition();
         return RESULT_CONTINUE;
       }
       int size = scratch.readLittleEndianInt();
       if (chunkType == FOURCC_JUNK) {
         pendingReposition = input.getPosition() + size + 8;
+        return RESULT_CONTINUE;
+      } else if (chunkType == FOURCC_RIFF) {
+        // Skip 12 bytes for FOURCC_RIFF, the type should be RIFF-AVIX
+        Assertions.checkState(scratch.readLittleEndianInt() == FOURCC_AVIX);
+        input.skipFully(12);
+        input.resetPeekPosition();
         return RESULT_CONTINUE;
       }
       input.skipFully(8);
