@@ -35,7 +35,6 @@ COMMON_OPTIONS="
     --disable-postproc
     --disable-avfilter
     --disable-symver
-    --disable-avresample
     --enable-swresample
     --enable-libvpx
     --extra-ldexeflags=-pie

@@ -128,7 +128,6 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
     return -1;
   }
-  avcodec_register_all();
   return JNI_VERSION_1_6;
 }
 
@@ -212,7 +211,7 @@ AUDIO_DECODER_FUNC(jlong, ffmpegReset, jlong jContext, jbyteArray extraData) {
     // Release and recreate the context if the codec is TrueHD.
     // TODO: Figure out why flushing doesn't work for this codec.
     releaseContext(context);
-    AVCodec *codec = avcodec_find_decoder(codecId);
+    AVCodec *codec = const_cast<AVCodec *>(avcodec_find_decoder(codecId));
     if (!codec) {
       LOGE("Unexpected error finding codec %d.", codecId);
       return 0L;
@@ -239,7 +238,7 @@ AVCodec *getCodecByName(JNIEnv *env, jstring codecName) {
     return NULL;
   }
   const char *codecNameChars = env->GetStringUTFChars(codecName, NULL);
-  AVCodec *codec = avcodec_find_decoder_by_name(codecNameChars);
+  AVCodec *codec = const_cast<AVCodec *>(avcodec_find_decoder_by_name(codecNameChars));
   env->ReleaseStringUTFChars(codecName, codecNameChars);
   return codec;
 }
