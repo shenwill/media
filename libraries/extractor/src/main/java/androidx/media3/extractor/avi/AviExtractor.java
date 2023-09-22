@@ -94,6 +94,9 @@ public final class AviExtractor implements Extractor {
   @SuppressWarnings("ConstantCaseForConstants")
   public static final int FOURCC_vids = 0x73646976;
 
+  @SuppressWarnings("ConstantCaseForConstants")
+  public static final int FOURCC_indx = 0x78646e69;
+
   /** Parser states. */
   @Documented
   @Retention(RetentionPolicy.SOURCE)
@@ -133,6 +136,8 @@ public final class AviExtractor implements Extractor {
   private @MonotonicNonNull AviMainHeaderChunk aviHeader;
   private long durationUs;
   private ChunkReader[] chunkReaders;
+  private int chunkReaderIndex;
+  private long moviHeaderPosition;
 
   private long pendingReposition;
   @Nullable private ChunkReader currentChunkReader;
@@ -281,7 +286,7 @@ public final class AviExtractor implements Extractor {
     pendingReposition = C.INDEX_UNSET;
     currentChunkReader = null;
     for (ChunkReader chunkReader : chunkReaders) {
-      chunkReader.seekToPosition(position);
+      chunkReader.seekToPosition(position, timeUs);
     }
     if (position == 0) {
       if (chunkReaders.length == 0) {
@@ -377,8 +382,18 @@ public final class AviExtractor implements Extractor {
       }
       chunkReader.incrementIndexChunkCount();
     }
+    long frameDurationUs = -1;
     for (ChunkReader chunkReader : chunkReaders) {
       chunkReader.compactIndex();
+      Log.i(TAG, chunkReader.report());
+      if (chunkReader.isVideo()) {
+        frameDurationUs = chunkReader.getFrameDurationUs();
+      }
+    }
+    for (ChunkReader chunkReader : chunkReaders) {
+      if (!chunkReader.isVideo()) {
+        chunkReader.setVideoFrameDurationUs(frameDurationUs);
+      }
     }
     seekMapHasBeenOutput = true;
     extractorOutput.seekMap(new AviSeekMap(durationUs));
@@ -416,13 +431,17 @@ public final class AviExtractor implements Extractor {
 
   // This function reads Movi chunks cross all RIFF-AVIX chunks
   // RIFF-AVIX chunks expected "only contain LIST ‘movi’ data".
-  // https://web.archive.org/web/20070112225112/http://www.the-labs.com/Video/odmlff2-avidef.pdf
   private int readMoviChunks(ExtractorInput input) throws IOException {
     if (input.getPosition() >= input.getLength()) {
       return C.RESULT_END_OF_INPUT;
     } else if (currentChunkReader != null) {
       if (currentChunkReader.onChunkData(input)) {
+        long indexChunkPosition = currentChunkReader.getPendingSeekPosition();
         currentChunkReader = null;
+        if (indexChunkPosition > 0) {
+          pendingReposition = indexChunkPosition;
+          return RESULT_CONTINUE;
+        }
       }
     } else {
       alignInputToEvenPosition(input);
@@ -453,9 +472,17 @@ public final class AviExtractor implements Extractor {
       if (chunkReader == null) {
         // No handler for this chunk. We skip it.
         pendingReposition = input.getPosition() + size;
+        Log.w(TAG, "not handled chunkType: "
+            + String.format("%08X %c%c%c%c, size %d from position %d to end %d",
+            chunkType & 0xFFFFFFFF,
+            (char) (chunkType & 0x000000FF),
+            (char) ((chunkType & 0x0000FF00) >> 8),
+            (char) ((chunkType & 0x00FF0000) >> 16),
+            (char) ((chunkType & 0xFF000000) >> 24),
+            size, input.getPosition(), pendingReposition));
         return RESULT_CONTINUE;
       } else {
-        chunkReader.onChunkStart(size);
+        chunkReader.onChunkStart(chunkType, size);
         this.currentChunkReader = chunkReader;
       }
     }
@@ -494,6 +521,8 @@ public final class AviExtractor implements Extractor {
           new ChunkReader(
               streamId, trackType, durationUs, aviStreamHeaderChunk.length, trackOutput);
       this.durationUs = durationUs;
+      // It either be a single index chunk, or a super index pointing to interleaved index segments.
+      chunkReader.setIndices(streamList.getChild(StreamIndexChunk.class), -1);
       return chunkReader;
     } else {
       // We don't currently support tracks other than video and audio.
@@ -541,6 +570,8 @@ public final class AviExtractor implements Extractor {
         if (seekPoints.first.position < result.first.position) {
           result = seekPoints;
         }
+        Log.i(TAG, String.format("seek %d video seek point: %d, audio seek point: %d, diff %d",
+            timeUs, result.first.position, seekPoints.first.position, result.first.position - seekPoints.first.position));
       }
       return result;
     }

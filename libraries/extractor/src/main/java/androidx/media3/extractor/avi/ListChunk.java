@@ -87,6 +87,8 @@ import com.google.common.collect.ImmutableList;
         return StreamFormatChunk.parseFrom(trackType, body);
       case AviExtractor.FOURCC_strn:
         return StreamNameChunk.parseFrom(body);
+      case AviExtractor.FOURCC_indx:
+        return StreamIndexChunk.parseFrom(trackType, body);
       default:
         return null;
     }
