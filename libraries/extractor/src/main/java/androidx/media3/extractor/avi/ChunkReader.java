@@ -182,16 +182,11 @@ import java.util.Arrays;
     }
   }
 
-  int logCount = 0;
   public long getCurrentChunkTimestampUs() {
-    long pts = indicesBasedOnAllFrames()
+    return indicesBasedOnAllFrames()
         ? getChunkTimestampUs(currentChunkIndex)
         : latestKeyframeIndex * videoFrameDurationUs
           + chunkCountSinceLatestKeyframe * getFrameDurationUs();
-    if (logCount++ < 20) {
-      Log.i(getTag(), "pts " + pts);
-    }
-    return pts;
   }
 
   public long getFrameDurationUs() {
@@ -216,25 +211,24 @@ import java.util.Arrays;
   }
 
   public boolean isCurrentFrameAKeyFrame() {
-    if (isOpenDmlExt()) {
-      if (pendingSeekTimeUs != C.TIME_UNSET) {
-        return false;
-      }
-      int ixNo = locateSuperIndexNoForFrameIndex(currentChunkIndex);
-      return Arrays.binarySearch(keyframeIndicesList[ixNo], currentChunkIndex) >= 0;
-    }
+    boolean found = false;
     if (indicesBasedOnAllFrames()) {
-      return Arrays.binarySearch(keyFrameIndices, currentChunkIndex) >= 0;
+      found = Arrays.binarySearch(keyFrameIndices, currentChunkIndex) >= 0;
+      if (!found) {
+        if (isOpenDmlExt() && (pendingSeekTimeUs == C.TIME_UNSET)) {
+          int ixNo = locateSuperIndexNoForFrameIndex(currentChunkIndex);
+          found = Arrays.binarySearch(keyframeIndicesList[ixNo], currentChunkIndex) >= 0;
+        }
+      }
     } else {
       int index = Arrays.binarySearch(keyFrameOffsets, currentChunkOffset);
       if (index >= 0) {
         latestKeyframeIndex = index;
         chunkCountSinceLatestKeyframe = 0;
-        return true;
-      } else {
-        return false;
+        found = true;
       }
     }
+    return found;
   }
 
   public boolean isVideo() {
@@ -310,6 +304,7 @@ import java.util.Arrays;
       if (keyframeIndexSizes[ixIndex] == 0) {
         pendingSeekTimeUs = timeUs;
         pendingIXChunkIndex = ixIndex;
+        currentChunkIndex = C.INDEX_UNSET;
         Log.d(getTag(), String.format("seekToPosition(position: %d, timeUs: %d) results in " +
                 "pendingSeekTimeUs %d pendingIXChunkIndex %d, and leave currentChunkIndex %d",
             position, timeUs, pendingSeekTimeUs, pendingIXChunkIndex, currentChunkIndex));
