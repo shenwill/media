@@ -45,8 +45,11 @@ import com.google.common.collect.ImmutableList;
         }
         builder.add(aviChunk);
       }
-      body.setPosition(innerBoxBodyEndPosition);
+      if ((innerBoxBodyEndPosition & 1) == 1) {
+        innerBoxBodyEndPosition++;
+      }
       body.setLimit(listBodyEndPosition);
+      body.setPosition(innerBoxBodyEndPosition);
     }
     return new ListChunk(listType, builder.build());
   }

@@ -43,6 +43,7 @@ import com.google.common.collect.ImmutableList;
   }
 
   public final Format format;
+  public int blockSize;
 
   public StreamFormatChunk(Format format) {
     this.format = format;
@@ -100,7 +101,13 @@ import com.google.common.collect.ImmutableList;
     if (MimeTypes.AUDIO_AAC.equals(mimeType) && codecData.length > 0) {
       formatBuilder.setInitializationData(ImmutableList.of(codecData));
     }
-    return new StreamFormatChunk(formatBuilder.build());
+    StreamFormatChunk chunk = new StreamFormatChunk(formatBuilder.build());
+    if (MimeTypes.AUDIO_MPEG.equals(mimeType) && codecData.length > 0) {
+      ParsableByteArray byteArray = new ParsableByteArray(codecData);
+      byteArray.skipBytes(6);
+      chunk.blockSize = byteArray.readLittleEndianShort();
+    }
+    return chunk;
   }
 
   @Nullable

@@ -473,12 +473,8 @@ public final class AviExtractor implements Extractor {
         // No handler for this chunk. We skip it.
         pendingReposition = input.getPosition() + size;
         Log.w(TAG, "not handled chunkType: "
-            + String.format("%08X %c%c%c%c, size %d from position %d to end %d",
-            chunkType & 0xFFFFFFFF,
-            (char) (chunkType & 0x000000FF),
-            (char) ((chunkType & 0x0000FF00) >> 8),
-            (char) ((chunkType & 0x00FF0000) >> 16),
-            (char) ((chunkType & 0xFF000000) >> 24),
+            + String.format("%08X %s, size %d from position %d to end %d",
+            chunkType & 0xFFFFFFFF, intToFourCC(chunkType),
             size, input.getPosition(), pendingReposition));
         return RESULT_CONTINUE;
       } else {
@@ -496,6 +492,10 @@ public final class AviExtractor implements Extractor {
     if (aviStreamHeaderChunk == null) {
       Log.w(TAG, "Missing Stream Header");
       return null;
+    } else {
+      Log.i(TAG, String.format("Stream '%s' report: rate %d, scale %d, length: %d",
+          intToFourCC(aviStreamHeaderChunk.streamType),
+          aviStreamHeaderChunk.rate, aviStreamHeaderChunk.scale, aviStreamHeaderChunk.length));
     }
     if (streamFormatChunk == null) {
       Log.w(TAG, "Missing Stream Format");
@@ -575,6 +575,14 @@ public final class AviExtractor implements Extractor {
       }
       return result;
     }
+  }
+
+  public static String intToFourCC(int type) {
+    return String.format("%c%c%c%c",
+        (char) (type & 0x000000FF),
+        (char) ((type & 0x0000FF00) >> 8),
+        (char) ((type & 0x00FF0000) >> 16),
+        (char) ((type & 0xFF000000) >> 24));
   }
 
   private static class ChunkHeaderHolder {
