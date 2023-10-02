@@ -83,7 +83,8 @@ import com.google.common.collect.ImmutableList;
     }
     int channelCount = body.readLittleEndianUnsignedShort();
     int samplesPerSecond = body.readLittleEndianInt();
-    body.skipBytes(6); // averageBytesPerSecond (4 bytes), nBlockAlign (2 bytes).
+    int bytesPerSecond = body.readLittleEndianInt();
+    body.skipBytes(2); // nBlockAlign (2 bytes).
     int bitsPerSample = body.readUnsignedShort();
     int pcmEncoding = Util.getPcmEncoding(bitsPerSample);
     int cbSize = body.readLittleEndianUnsignedShort();
@@ -95,6 +96,9 @@ import com.google.common.collect.ImmutableList;
         .setSampleMimeType(mimeType)
         .setChannelCount(channelCount)
         .setSampleRate(samplesPerSecond);
+    if (bytesPerSecond != 0) {
+      formatBuilder.setAverageBitrate(bytesPerSecond * 8);
+    }
     if (MimeTypes.AUDIO_RAW.equals(mimeType) && pcmEncoding != C.ENCODING_INVALID) {
       formatBuilder.setPcmEncoding(pcmEncoding);
     }

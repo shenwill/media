@@ -113,10 +113,10 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         FileTypes.ADTS,
         FileTypes.AC3,
         FileTypes.AC4,
+        FileTypes.AVI,
         FileTypes.MP3,
         // The following extractors are not part of the optimized ordering, and were appended
         // without further analysis.
-        FileTypes.AVI,
         FileTypes.MIDI,
         FileTypes.JPEG,
         FileTypes.PNG,

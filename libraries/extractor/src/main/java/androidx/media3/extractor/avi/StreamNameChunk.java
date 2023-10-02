@@ -21,7 +21,14 @@ import androidx.media3.common.util.ParsableByteArray;
 /* package */ final class StreamNameChunk implements AviChunk {
 
   public static StreamNameChunk parseFrom(ParsableByteArray body) {
-    return new StreamNameChunk(body.readString(body.bytesLeft()));
+    byte[] bytes = new byte[body.bytesLeft()];
+    body.readBytes(bytes, 0 , bytes.length);
+    int len = bytes.length;
+    if (bytes[bytes.length - 1] == 0) {
+      len -= 1;
+    }
+    String name = new String(bytes, 0 , len);
+    return new StreamNameChunk(name);
   }
 
   public final String name;

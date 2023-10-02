@@ -33,6 +33,7 @@ import androidx.media3.extractor.ExtractorInput;
 import androidx.media3.extractor.ExtractorOutput;
 import androidx.media3.extractor.PositionHolder;
 import androidx.media3.extractor.SeekMap;
+import androidx.media3.extractor.SeekPoint;
 import androidx.media3.extractor.TrackOutput;
 import java.io.IOException;
 import java.lang.annotation.Documented;
@@ -109,6 +110,7 @@ public final class AviExtractor implements Extractor {
     STATE_FINDING_IDX1_HEADER,
     STATE_READING_IDX1_BODY,
     STATE_READING_SAMPLES,
+    STATE_REQUEST_INDICES,
   })
   private @interface State {}
 
@@ -119,6 +121,7 @@ public final class AviExtractor implements Extractor {
   private static final int STATE_FINDING_IDX1_HEADER = 4;
   private static final int STATE_READING_IDX1_BODY = 5;
   private static final int STATE_READING_SAMPLES = 6;
+  private static final int STATE_REQUEST_INDICES = 7;
 
   private static final int AVIIF_KEYFRAME = 16;
 
@@ -140,6 +143,7 @@ public final class AviExtractor implements Extractor {
   private long moviHeaderPosition;
 
   private long pendingReposition;
+  private long pendingSeekTimeUs;
   @Nullable private ChunkReader currentChunkReader;
   private int hdrlSize;
   private long moviStart;
@@ -165,6 +169,7 @@ public final class AviExtractor implements Extractor {
     this.state = STATE_SKIPPING_TO_HDRL;
     this.extractorOutput = output;
     pendingReposition = C.INDEX_UNSET;
+    pendingSeekTimeUs = C.TIME_UNSET;
   }
 
   @Override
@@ -276,6 +281,8 @@ public final class AviExtractor implements Extractor {
         return RESULT_CONTINUE;
       case STATE_READING_SAMPLES:
         return readMoviChunks(input);
+      case STATE_REQUEST_INDICES:
+        return requestIndices(input);
       default:
         throw new AssertionError(); // Should never happen.
     }
@@ -286,7 +293,7 @@ public final class AviExtractor implements Extractor {
     pendingReposition = C.INDEX_UNSET;
     currentChunkReader = null;
     for (ChunkReader chunkReader : chunkReaders) {
-      chunkReader.seekToPosition(position, timeUs);
+      chunkReader.willSeekToPosition(position, timeUs);
     }
     if (position == 0) {
       if (chunkReaders.length == 0) {
@@ -297,7 +304,7 @@ public final class AviExtractor implements Extractor {
       }
       return;
     }
-    state = STATE_READING_SAMPLES;
+    state = pendingSeekTimeUs == C.TIME_UNSET ? STATE_READING_SAMPLES : STATE_REQUEST_INDICES;
   }
 
   @Override
@@ -321,6 +328,11 @@ public final class AviExtractor implements Extractor {
       if (pendingReposition < currentPosition
           || pendingReposition > currentPosition + RELOAD_MINIMUM_SEEK_DISTANCE) {
         seekPosition.position = pendingReposition;
+        if (state == STATE_READING_SAMPLES) {
+          for (ChunkReader reader : chunkReaders) {
+            reader.willSeekToPosition(pendingReposition, C.TIME_UNSET);
+          }
+        }
         needSeek = true;
       } else {
         // The distance to the target position is short enough that it makes sense to just skip the
@@ -371,29 +383,20 @@ public final class AviExtractor implements Extractor {
       int chunkId = body.readLittleEndianInt();
       int flags = body.readLittleEndianInt();
       long offset = body.readLittleEndianInt() + seekOffset;
-      body.readLittleEndianInt(); // We ignore the size.
+      int size = body.readLittleEndianInt();
       ChunkReader chunkReader = getChunkReader(chunkId);
       if (chunkReader == null) {
         // We ignore unknown chunk IDs.
         continue;
       }
       if ((flags & AVIIF_KEYFRAME) == AVIIF_KEYFRAME) {
-        chunkReader.appendKeyFrameToIndex(offset);
+        chunkReader.appendKeyFrameToInitialIndex(offset, size);
       }
       chunkReader.incrementIndexChunkCount();
     }
-    long frameDurationUs = -1;
     for (ChunkReader chunkReader : chunkReaders) {
       chunkReader.compactIndex();
       Log.i(TAG, chunkReader.report());
-      if (chunkReader.isVideo()) {
-        frameDurationUs = chunkReader.getFrameDurationUs();
-      }
-    }
-    for (ChunkReader chunkReader : chunkReaders) {
-      if (!chunkReader.isVideo()) {
-        chunkReader.setVideoFrameDurationUs(frameDurationUs);
-      }
     }
     seekMapHasBeenOutput = true;
     extractorOutput.seekMap(new AviSeekMap(durationUs));
@@ -485,6 +488,29 @@ public final class AviExtractor implements Extractor {
     return RESULT_CONTINUE;
   }
 
+  private int requestIndices(ExtractorInput input) throws IOException {
+    int result = readMoviChunks(input);
+    if (result == RESULT_CONTINUE
+        && currentChunkReader == null && pendingReposition == C.INDEX_UNSET) {
+      boolean allStreamIndicesReady = true;
+      for (ChunkReader reader : chunkReaders) {
+        long position = reader.getPendingSeekPosition();
+        if (position != C.INDEX_UNSET) {
+          allStreamIndicesReady = false;
+          pendingReposition = position;
+          break;
+        }
+      }
+      if (allStreamIndicesReady) {
+        SeekMap.SeekPoints seekPoints = getSeekPointsFromReaders(pendingSeekTimeUs);
+        pendingReposition = seekPoints.first.position;
+        state = STATE_READING_SAMPLES;
+        pendingSeekTimeUs = C.TIME_UNSET;
+      }
+    }
+    return result;
+  }
+
   @Nullable
   private ChunkReader processStreamList(ListChunk streamList, int streamId) {
     AviStreamHeaderChunk aviStreamHeaderChunk = streamList.getChild(AviStreamHeaderChunk.class);
@@ -493,7 +519,7 @@ public final class AviExtractor implements Extractor {
       Log.w(TAG, "Missing Stream Header");
       return null;
     } else {
-      Log.i(TAG, String.format("Stream '%s' report: rate %d, scale %d, length: %d",
+      Log.i(TAG, String.format("Stream '%s' report: rate %d, scale %d, chunks count: %d",
           intToFourCC(aviStreamHeaderChunk.streamType),
           aviStreamHeaderChunk.rate, aviStreamHeaderChunk.scale, aviStreamHeaderChunk.length));
     }
@@ -514,15 +540,23 @@ public final class AviExtractor implements Extractor {
       builder.setLabel(streamName.name);
     }
     int trackType = MimeTypes.getTrackType(streamFormat.sampleMimeType);
+    if (trackType == C.TRACK_TYPE_VIDEO) {
+      builder.setFrameRate(aviStreamHeaderChunk.getFrameRate());
+    }
     if (trackType == C.TRACK_TYPE_AUDIO || trackType == C.TRACK_TYPE_VIDEO) {
       TrackOutput trackOutput = extractorOutput.track(streamId, trackType);
       trackOutput.format(builder.build());
-      ChunkReader chunkReader =
-          new ChunkReader(
-              streamId, trackType, durationUs, aviStreamHeaderChunk.length, trackOutput);
+      ChunkReader chunkReader = MimeTypes.AUDIO_MPEG.equals(streamFormat.sampleMimeType)
+          ? new ChunkReaderMp3(
+              streamId, durationUs, streamFormat.sampleRate, aviStreamHeaderChunk.length, trackOutput)
+          : (MimeTypes.AUDIO_AC3.equals(streamFormat.sampleMimeType)
+          ? new ChunkReaderAc3(
+              streamId, durationUs, aviStreamHeaderChunk.length, trackOutput)
+          : new ChunkReaderVideo(
+              streamId, durationUs, aviStreamHeaderChunk.length, trackOutput));
       this.durationUs = durationUs;
       // It either be a single index chunk, or a super index pointing to interleaved index segments.
-      chunkReader.setIndices(streamList.getChild(StreamIndexChunk.class), -1);
+      chunkReader.setIndices(streamList.getChild(StreamIndexChunk.class), C.INDEX_UNSET);
       return chunkReader;
     } else {
       // We don't currently support tracks other than video and audio.
@@ -542,6 +576,38 @@ public final class AviExtractor implements Extractor {
     }
   }
 
+  private SeekMap.SeekPoints getSeekPointsFromReaders(long timeUs) {
+    boolean needSeekIndices = false;
+    SeekMap.SeekPoints result = chunkReaders[0].getSeekPoints(timeUs);
+    if (result == null) {
+      needSeekIndices = true;
+      result = new SeekMap.SeekPoints(new SeekPoint(timeUs, chunkReaders[0].getPendingSeekPosition()));
+    }
+    if (!needSeekIndices) {
+      for (int i = 1; i < chunkReaders.length; i++) {
+        SeekMap.SeekPoints seekPoints = chunkReaders[i].getSeekPoints(timeUs);
+        if (seekPoints == null) {
+          needSeekIndices = true;
+          result = new SeekMap.SeekPoints(new SeekPoint(timeUs, chunkReaders[i].getPendingSeekPosition()));
+          break;
+        }
+        if (seekPoints.first.position < result.first.position) {
+          result = seekPoints;
+        }
+        Log.i(TAG, String.format("[aviIndex]getSeekPoints for timeUs %d: " +
+                "get video seek point: %d, audio seek point: %d, diff %d",
+            timeUs, result.first.position, seekPoints.first.position,
+            result.first.position - seekPoints.first.position));
+      }
+    }
+    if (needSeekIndices) {
+      pendingSeekTimeUs = timeUs;
+      state = STATE_REQUEST_INDICES;
+      Log.i(TAG, String.format("[aviIndex]getSeekPoints for timeUs %d: indices missing at %d",
+          timeUs, result.first.position));
+    }
+    return result;
+  }
   // Internal classes.
 
   private class AviSeekMap implements SeekMap {
@@ -564,16 +630,7 @@ public final class AviExtractor implements Extractor {
 
     @Override
     public SeekPoints getSeekPoints(long timeUs) {
-      SeekPoints result = chunkReaders[0].getSeekPoints(timeUs);
-      for (int i = 1; i < chunkReaders.length; i++) {
-        SeekPoints seekPoints = chunkReaders[i].getSeekPoints(timeUs);
-        if (seekPoints.first.position < result.first.position) {
-          result = seekPoints;
-        }
-        Log.i(TAG, String.format("seek %d video seek point: %d, audio seek point: %d, diff %d",
-            timeUs, result.first.position, seekPoints.first.position, result.first.position - seekPoints.first.position));
-      }
-      return result;
+      return getSeekPointsFromReaders(timeUs);
     }
   }
 

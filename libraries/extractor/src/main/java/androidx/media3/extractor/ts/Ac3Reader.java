@@ -110,6 +110,10 @@ public final class Ac3Reader implements ElementaryStreamReader {
     output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_AUDIO);
   }
 
+  public void setTrackOutput(TrackOutput trackOutput) {
+    this.output = trackOutput;
+  }
+
   @Override
   public void packetStarted(long pesTimeUs, @TsPayloadReader.Flags int flags) {
     if (pesTimeUs != C.TIME_UNSET) {
