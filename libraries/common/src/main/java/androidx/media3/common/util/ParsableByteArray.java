@@ -39,6 +39,7 @@ public final class ParsableByteArray {
 
   private byte[] data;
   private int position;
+  private int nibbleCount;
   // TODO(internal b/147657250): Enforce this limit on all read methods.
   private int limit;
 
@@ -108,6 +109,7 @@ public final class ParsableByteArray {
     this.data = data;
     this.limit = limit;
     position = 0;
+    nibbleCount = 0;
   }
 
   /**
@@ -143,6 +145,10 @@ public final class ParsableByteArray {
   public void setLimit(int limit) {
     Assertions.checkArgument(limit >= 0 && limit <= data.length);
     this.limit = limit;
+  }
+
+  public int getNibbleCount() {
+    return nibbleCount;
   }
 
   /** Returns the current offset in the array, in bytes. */
@@ -253,6 +259,23 @@ public final class ParsableByteArray {
     Assertions.checkArgument(
         SUPPORTED_CHARSETS_FOR_READLINE.contains(charset), "Unsupported charset: " + charset);
     return (char) (peekCharacterAndSize(charset) >> Short.SIZE);
+  }
+
+  public void alignNibble() {
+    if ((nibbleCount & 1) == 1) {
+      readNibble();
+    }
+  }
+
+  public int readNibble() {
+    int nibble;
+    if (nibbleCount % 2 == 0) {
+      nibble = (data[position] >> 4) & 0x0F;
+    } else {
+      nibble = data[position++] & 0x0F;
+    }
+    nibbleCount++;
+    return nibble;
   }
 
   /** Reads the next byte as an unsigned value. */
