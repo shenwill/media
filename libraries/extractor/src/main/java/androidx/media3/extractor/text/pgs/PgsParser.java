@@ -29,6 +29,8 @@ import androidx.media3.extractor.text.SubtitleParser;
 import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.zip.Inflater;
 
 /** A {@link SubtitleParser} for PGS subtitles. */
@@ -38,7 +40,11 @@ public final class PgsParser implements SubtitleParser {
   private static final int SECTION_TYPE_PALETTE = 0x14;
   private static final int SECTION_TYPE_BITMAP_PICTURE = 0x15;
   private static final int SECTION_TYPE_IDENTIFIER = 0x16;
+  private static final int SECTION_TYPE_WINDOW_DEF = 0x17;
   private static final int SECTION_TYPE_END = 0x80;
+
+  private static final int SEQUENCE_FIRST = 0x80;
+  private static final int SEQUENCE_LAST = 0x40;
 
   private static final byte INFLATE_HEADER = 0x78;
 
@@ -102,13 +108,17 @@ public final class PgsParser implements SubtitleParser {
         cueBuilder.parsePaletteSection(buffer, sectionLength);
         break;
       case SECTION_TYPE_BITMAP_PICTURE:
-        cueBuilder.parseBitmapSection(buffer, sectionLength);
+        if (cueBuilder.parseBitmapSection(buffer, sectionLength)) {
+          cue = cueBuilder.build();
+        }
         break;
       case SECTION_TYPE_IDENTIFIER:
         cueBuilder.parseIdentifierSection(buffer, sectionLength);
         break;
+      case SECTION_TYPE_WINDOW_DEF:
+        cueBuilder.parseWindowDefinition(buffer, sectionLength);
+        break;
       case SECTION_TYPE_END:
-        cue = cueBuilder.build();
         cueBuilder.reset();
         break;
       default:
@@ -123,14 +133,15 @@ public final class PgsParser implements SubtitleParser {
 
     private final ParsableByteArray bitmapData;
     private final int[] colors;
+    private Map<Integer, Window> windows;
+    private Map<Integer, PgsObject> objects;
 
     private boolean colorsSet;
     private int planeWidth;
     private int planeHeight;
-    private int bitmapX;
-    private int bitmapY;
     private int bitmapWidth;
     private int bitmapHeight;
+    private int bitmapId;
 
     public CueBuilder() {
       bitmapData = new ParsableByteArray();
@@ -164,21 +175,24 @@ public final class PgsParser implements SubtitleParser {
       colorsSet = true;
     }
 
-    private void parseBitmapSection(ParsableByteArray buffer, int sectionLength) {
+    // Returns true if bitmapData is completed
+    private boolean parseBitmapSection(ParsableByteArray buffer, int sectionLength) {
       if (sectionLength < 4) {
-        return;
+        return false;
       }
-      buffer.skipBytes(3); // Id (2 bytes), version (1 byte).
-      boolean isBaseSection = (0x80 & buffer.readUnsignedByte()) != 0;
+      bitmapId = buffer.readUnsignedShort();
+      buffer.skipBytes(1); // version (1 byte).
+      int sequenceFlag = buffer.readUnsignedByte();
+      boolean isBaseSection = (SEQUENCE_FIRST & sequenceFlag) != 0;
       sectionLength -= 4;
 
       if (isBaseSection) {
         if (sectionLength < 7) {
-          return;
+          return false;
         }
         int totalLength = buffer.readUnsignedInt24();
         if (totalLength < 4) {
-          return;
+          return false;
         }
         bitmapWidth = buffer.readUnsignedShort();
         bitmapHeight = buffer.readUnsignedShort();
@@ -193,6 +207,7 @@ public final class PgsParser implements SubtitleParser {
         buffer.readBytes(bitmapData.getData(), position, bytesToRead);
         bitmapData.setPosition(position + bytesToRead);
       }
+      return (SEQUENCE_LAST & sequenceFlag) != 0;
     }
 
     private void parseIdentifierSection(ParsableByteArray buffer, int sectionLength) {
@@ -201,9 +216,38 @@ public final class PgsParser implements SubtitleParser {
       }
       planeWidth = buffer.readUnsignedShort();
       planeHeight = buffer.readUnsignedShort();
-      buffer.skipBytes(11);
-      bitmapX = buffer.readUnsignedShort();
-      bitmapY = buffer.readUnsignedShort();
+      buffer.skipBytes(6);
+      int objectLength = buffer.readUnsignedByte();
+      objects = new HashMap(objectLength);
+      for (int i = 0; i < objectLength; i++) {
+        PgsObject object = new PgsObject();
+        object.id = buffer.readUnsignedShort();
+        object.windowId = buffer.readUnsignedByte();
+        boolean cropped = buffer.readUnsignedByte() == 0x40;
+        object.positionX = buffer.readUnsignedShort();
+        object.positionY = buffer.readUnsignedShort();
+        if (cropped) {
+          buffer.skipBytes(8); // cropping position x, y, width, height
+        }
+        objects.put(object.id, object);
+      }
+    }
+
+    private void parseWindowDefinition(ParsableByteArray buffer, int sectionLength) {
+      if (sectionLength < 10) {
+        return;
+      }
+      int windowLength = buffer.readUnsignedByte();
+      windows = new HashMap(windowLength);
+      for (int i = 0; i < windowLength; i++) {
+        Window window = new Window();
+        window.id = buffer.readUnsignedByte();
+        window.positionX = buffer.readUnsignedShort();
+        window.positionY = buffer.readUnsignedShort();
+        window.width = buffer.readUnsignedShort();
+        window.height = buffer.readUnsignedShort();
+        windows.put(window.id, window);
+      }
     }
 
     @Nullable
@@ -241,12 +285,13 @@ public final class PgsParser implements SubtitleParser {
       }
       Bitmap bitmap =
           Bitmap.createBitmap(argbBitmapData, bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888);
+      PgsObject object = objects.get(bitmapId);
       // Build the cue.
-      return new Cue.Builder()
+      return object == null ? null : new Cue.Builder()
           .setBitmap(bitmap)
-          .setPosition((float) bitmapX / planeWidth)
+          .setPosition((float) object.positionX / planeWidth)
           .setPositionAnchor(Cue.ANCHOR_TYPE_START)
-          .setLine((float) bitmapY / planeHeight, Cue.LINE_TYPE_FRACTION)
+          .setLine((float) object.positionY / planeHeight, Cue.LINE_TYPE_FRACTION)
           .setLineAnchor(Cue.ANCHOR_TYPE_START)
           .setSize((float) bitmapWidth / planeWidth)
           .setBitmapHeight((float) bitmapHeight / planeHeight)
@@ -256,12 +301,28 @@ public final class PgsParser implements SubtitleParser {
     public void reset() {
       planeWidth = 0;
       planeHeight = 0;
-      bitmapX = 0;
-      bitmapY = 0;
       bitmapWidth = 0;
       bitmapHeight = 0;
+      bitmapId = -1;
       bitmapData.reset(0);
       colorsSet = false;
+      objects = null;
+      windows = null;
+    }
+
+    private static final class Window {
+      int id;
+      int positionX;
+      int positionY;
+      int width;
+      int height;
+    }
+
+    private static final class PgsObject {
+      int id;
+      int windowId;
+      int positionX;
+      int positionY;
     }
   }
 }
