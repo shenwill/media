@@ -1546,6 +1546,7 @@ public final class MediaItem implements Bundleable {
       private @C.SelectionFlags int selectionFlags;
       private @C.RoleFlags int roleFlags;
       @Nullable private String label;
+      @Nullable private List<byte[]> initializationData;
       @Nullable private String id;
 
       /**
@@ -1564,6 +1565,7 @@ public final class MediaItem implements Bundleable {
         this.selectionFlags = subtitleConfiguration.selectionFlags;
         this.roleFlags = subtitleConfiguration.roleFlags;
         this.label = subtitleConfiguration.label;
+        this.initializationData = subtitleConfiguration.initializationData;
         this.id = subtitleConfiguration.id;
       }
 
@@ -1609,6 +1611,11 @@ public final class MediaItem implements Bundleable {
         return this;
       }
 
+      public Builder setInitializationData(@Nullable List<byte[]> initializationData) {
+        this.initializationData = initializationData;
+        return this;
+      }
+
       /** Sets the optional ID for this subtitle track. */
       @CanIgnoreReturnValue
       public Builder setId(@Nullable String id) {
@@ -1644,6 +1651,8 @@ public final class MediaItem implements Bundleable {
     /** The label. */
     @Nullable public final String label;
 
+    @Nullable public final List<byte[]> initializationData;
+
     /**
      * The ID of the subtitles. This will be propagated to the {@link Format#id} of the subtitle
      * track created from this configuration.
@@ -1657,6 +1666,7 @@ public final class MediaItem implements Bundleable {
         int selectionFlags,
         int roleFlags,
         @Nullable String label,
+        @Nullable List<byte[]> initializationData,
         @Nullable String id) {
       this.uri = uri;
       this.mimeType = mimeType;
@@ -1664,6 +1674,7 @@ public final class MediaItem implements Bundleable {
       this.selectionFlags = selectionFlags;
       this.roleFlags = roleFlags;
       this.label = label;
+      this.initializationData = initializationData;
       this.id = id;
     }
 
@@ -1674,6 +1685,7 @@ public final class MediaItem implements Bundleable {
       this.selectionFlags = builder.selectionFlags;
       this.roleFlags = builder.roleFlags;
       this.label = builder.label;
+      this.initializationData = builder.initializationData;
       this.id = builder.id;
     }
 
@@ -1814,7 +1826,7 @@ public final class MediaItem implements Bundleable {
         @C.SelectionFlags int selectionFlags,
         @C.RoleFlags int roleFlags,
         @Nullable String label) {
-      super(uri, mimeType, language, selectionFlags, roleFlags, label, /* id= */ null);
+      super(uri, mimeType, language, selectionFlags, roleFlags, label, null, /* id= */ null);
     }
 
     private Subtitle(Builder builder) {

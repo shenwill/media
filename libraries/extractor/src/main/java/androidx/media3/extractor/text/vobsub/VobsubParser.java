@@ -20,6 +20,8 @@ import android.graphics.Bitmap;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.text.Cue;
+import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.Log;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
@@ -37,19 +39,22 @@ import java.util.zip.Inflater;
 @UnstableApi
 public final class VobsubParser implements SubtitleParser {
 
+  private static final String TAG = "VobsubParser";
   private static final byte INFLATE_HEADER = 0x78;
 
   private final ParsableByteArray buffer;
   private final ParsableByteArray inflatedBuffer;
   private final CueBuilder cueBuilder;
   @Nullable private Inflater inflater;
+  private final boolean hasIdx;
 
   public VobsubParser(@Nullable List<byte[]> initializationData) {
     buffer = new ParsableByteArray();
     inflatedBuffer = new ParsableByteArray();
     cueBuilder = new CueBuilder();
-    if (initializationData.size() > 0) {
-      cueBuilder.readIdx(initializationData.get(0));
+    hasIdx = initializationData != null && initializationData.size() > 0;
+    if (hasIdx) {
+      cueBuilder.readIdx(initializationData);
     }
   }
 
@@ -57,6 +62,10 @@ public final class VobsubParser implements SubtitleParser {
   public void reset() {}
   @Override
   public ImmutableList<CuesWithTiming> parse(byte[] data, int offset, int length) {
+    if (!hasIdx) {
+      Log.e(TAG, "idx is absent");
+      return ImmutableList.of();
+    }
     buffer.reset(data, /* limit= */ offset + length);
     buffer.setPosition(offset);
     if (buffer.peekUnsignedByte() == INFLATE_HEADER) {
@@ -64,14 +73,31 @@ public final class VobsubParser implements SubtitleParser {
         return ImmutableList.of();
       }
     }
-    cueBuilder.resetBmp();
-    ArrayList<Cue> cues = new ArrayList<>();
-    Cue cue = readSpu(buffer, cueBuilder);
-    if (cue != null) {
-      cues.add(cue);
+    if (cueBuilder.timestamps.size() > 0) {
+      int cueLength = cueBuilder.timestamps.size();
+      int totalBytes = buffer.bytesLeft();
+      int i = 0;
+      List<CuesWithTiming> cuesWithTimings = new ArrayList();
+      ParsableByteArray spuBuffer = new ParsableByteArray();
+      while (i < cueLength && cueBuilder.fileOffsets.get(i) < totalBytes) {
+        buffer.setPosition(cueBuilder.fileOffsets.get(i));
+        spuBufferFromMpegStream(spuBuffer, buffer, cueBuilder);
+        cueBuilder.resetBmp();
+        Cue cue = readSpu(spuBuffer, cueBuilder);
+        spuBuffer.reset(new byte[0]);
+        if (cue != null) {
+          cuesWithTimings.add(new CuesWithTiming(ImmutableList.of(cue),
+              cueBuilder.timestamps.get(i) + cueBuilder.delayMs * 1000,
+              cueBuilder.dateStop * 10000));
+        }
+        i++;
+      }
+      return ImmutableList.copyOf(cuesWithTimings);
     }
-    return ImmutableList.of(
-        new CuesWithTiming(cues, C.TIME_UNSET, cueBuilder.dateStop * 10000));
+    cueBuilder.resetBmp();
+    Cue cue = readSpu(buffer, cueBuilder);
+    return cue == null ? ImmutableList.of() : ImmutableList.of(
+        new CuesWithTiming(ImmutableList.of(cue), C.TIME_UNSET, cueBuilder.dateStop * 10000));
   }
 
   private boolean inflateData(ParsableByteArray buffer) {
@@ -87,10 +113,45 @@ public final class VobsubParser implements SubtitleParser {
     return false;
   }
 
+  private static void spuBufferFromMpegStream(
+      ParsableByteArray spuBuffer, ParsableByteArray buffer, CueBuilder cueBuilder) {
+    while (true) {
+      long headId = buffer.readUnsignedInt();
+      if (headId == 0x000001ba) { // PS Package
+        buffer.skipBytes(9);
+        int stuffingLength = buffer.readUnsignedByte() & 0x07;
+        buffer.skipBytes(stuffingLength);
+      } else if (headId == 0x000001bb) { // PS System Header
+        buffer.skipBytes(buffer.readUnsignedShort());
+      } else if (headId == 0x000001bd) { // PES Package
+        int packageLength = buffer.readUnsignedShort();
+        buffer.readUnsignedShort(); // PES flags
+        int headDataLength = buffer.readUnsignedByte();
+        buffer.skipBytes(headDataLength);
+        int dataLength = packageLength - 3 - headDataLength;
+        Assertions.checkState(buffer.readUnsignedByte() == 0x20);
+        if (spuBuffer.getData().length == 0) {
+          spuBuffer.reset(new byte[buffer.readUnsignedShort()], dataLength - 1);
+          buffer.setPosition(buffer.getPosition() - 2);
+          buffer.readBytes(spuBuffer.getData(), 0, dataLength - 1);
+        } else {
+          buffer.readBytes(spuBuffer.getData(), spuBuffer.limit(), dataLength - 1);
+          spuBuffer.reset(spuBuffer.limit() + dataLength - 1);
+        }
+        if (spuBuffer.limit() == spuBuffer.getData().length) {
+          return;
+        }
+      } else if (headId == 0x000001be) { // padding stream
+        int paddingLength = buffer.readUnsignedShort();
+        buffer.skipBytes(paddingLength);
+      }
+    }
+  }
+
   @Nullable
   private static Cue readSpu(ParsableByteArray buffer, CueBuilder cueBuilder) {
-    int limit = buffer.limit();
     int spuLength = buffer.readUnsignedShort();
+    Assertions.checkState(spuLength == buffer.bytesLeft() + 2);
     int controlSectionOffset = buffer.readUnsignedShort();
     int graphicDataOffset = buffer.getPosition();
     buffer.setPosition(controlSectionOffset);
@@ -112,6 +173,7 @@ public final class VobsubParser implements SubtitleParser {
     private int dataOffsetOdd;
     private int dateStart;
     private int dateStop;
+    private int delayMs = 0;
     private boolean forceDisplay;
     private int[] palette;
     private int planeWidth;
@@ -120,13 +182,15 @@ public final class VobsubParser implements SubtitleParser {
     private int bitmapY;
     private int bitmapWidth;
     private int bitmapHeight;
+    private List<Long> timestamps = new ArrayList();
+    private List<Integer> fileOffsets = new ArrayList();
 
     public CueBuilder() {
       colors = new int[16];
     }
 
     private void parseControlSection(ParsableByteArray buffer) {
-      while (true) {
+      while (buffer.bytesLeft() >= 4) {
         int cmdDate = buffer.readUnsignedShort();
         int cmdNextOffset = buffer.readUnsignedShort();
         readControlSequence(buffer, cmdDate);
@@ -137,8 +201,10 @@ public final class VobsubParser implements SubtitleParser {
     }
 
     private boolean readControlSequence(ParsableByteArray buffer, int cmdDate) {
-      while (true) {
+      List<Integer> lastCommands = new ArrayList<>();
+      while (buffer.bytesLeft() >= 1) {
         int command = buffer.readUnsignedByte();
+        lastCommands.add(command);
         switch (command) {
           case 0:
             forceDisplay = true;
@@ -188,10 +254,14 @@ public final class VobsubParser implements SubtitleParser {
             return false;
         }
       }
+      return false;
     }
 
-    private void readIdx(byte[] data) {
-      ParsableByteArray buffer = new ParsableByteArray(data);
+    private void readIdx(List<byte[]> dataList) {
+      ParsableByteArray buffer = new ParsableByteArray(dataList.get(0));
+      int langIndexSelected =
+          dataList.size() > 1 && dataList.get(1).length > 0 ? dataList.get(1)[0] : C.INDEX_UNSET;
+      boolean langHit = false;
       while (true) {
         String line = buffer.readLine();
         if (line == null) {
@@ -217,6 +287,22 @@ public final class VobsubParser implements SubtitleParser {
             colors[i] = Integer.parseInt(values[i].trim(), 16);
           }
           colorsSet = true;
+        } else if ("delay".equals(key) || "time offset".equals(key)) {
+          delayMs = Integer.parseInt(parts[1].trim());
+        } else if ("langidx".equals(key)) {
+          if (langIndexSelected == C.INDEX_UNSET) {
+            langIndexSelected = Integer.parseInt(parts[1].trim());
+          }
+        } else if ("id".equals(key)) { // id: en, index: 0
+          langHit = Integer.parseInt(parts[2].trim()) == langIndexSelected;
+        } else if ("timestamp".equals(key)) {
+          if (langHit) {
+            timestamps.add((Long.parseLong(parts[1].trim()) * 3600000
+            + Long.parseLong(parts[2]) * 60000
+            + Long.parseLong(parts[3]) * 1000
+            + Long.parseLong(parts[4].substring(0, 3))) * 1000);
+            fileOffsets.add(Integer.parseInt(parts[5].trim(), 16));
+          }
         }
       }
     }

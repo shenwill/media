@@ -177,6 +177,7 @@ public final class SingleSampleMediaSource extends BaseMediaSource {
             .setSelectionFlags(subtitleConfiguration.selectionFlags)
             .setRoleFlags(subtitleConfiguration.roleFlags)
             .setLabel(subtitleConfiguration.label)
+            .setInitializationData(subtitleConfiguration.initializationData)
             .setId(subtitleConfiguration.id != null ? subtitleConfiguration.id : trackId)
             .build();
     this.dataSpec =
