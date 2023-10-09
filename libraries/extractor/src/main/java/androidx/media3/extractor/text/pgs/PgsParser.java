@@ -21,6 +21,7 @@ import android.graphics.Bitmap;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.text.Cue;
+import androidx.media3.common.util.Assertions;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
@@ -29,6 +30,7 @@ import androidx.media3.extractor.text.SubtitleParser;
 import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.Inflater;
@@ -51,7 +53,8 @@ public final class PgsParser implements SubtitleParser {
   private final ParsableByteArray buffer;
   private final ParsableByteArray inflatedBuffer;
   private final CueBuilder cueBuilder;
-  @Nullable private Inflater inflater;
+  @Nullable
+  private Inflater inflater;
 
   public PgsParser() {
     buffer = new ParsableByteArray();
@@ -60,10 +63,14 @@ public final class PgsParser implements SubtitleParser {
   }
 
   @Override
-  public void reset() {}
+  public void reset() {
+  }
 
   @Override
   public ImmutableList<CuesWithTiming> parse(byte[] data, int offset, int length) {
+    if (data[offset] == 0x50 && data[offset + 1] == 0x47) {
+      return processFileData(data, offset, length);
+    }
     buffer.reset(data, /* limit= */ offset + length);
     buffer.setPosition(offset);
     maybeInflateData(buffer);
@@ -90,6 +97,43 @@ public final class PgsParser implements SubtitleParser {
     }
   }
 
+  private ImmutableList<CuesWithTiming> processFileData(byte[] data, int offset, int length) {
+    buffer.reset(data, /* limit= */ offset + length);
+    buffer.setPosition(offset);
+    ArrayList<CuesWithTiming> cuesWithTimings = new ArrayList<>();
+    ArrayList<Cue> cues = new ArrayList<>();
+    long pts = C.TIME_UNSET;
+    while (buffer.bytesLeft() >= 3) {
+      CuesWithTiming cuesWithTiming = readNextSectionWithTiming(buffer, cueBuilder);
+      if (cuesWithTiming != null) {
+        if (pts == C.TIME_UNSET) {
+          pts = cuesWithTiming.startTimeUs;
+        }
+        if (cuesWithTiming.startTimeUs - pts > 20000) {
+          long newPtsUs = cuesWithTiming.startTimeUs;
+          if (cues.size() > 0) {
+            // android.util.Log.e("", "new PTS " + newPtsUs + " completed cues: " + cues.size());
+            cuesWithTimings.add(new CuesWithTiming(cues, pts, newPtsUs - pts));
+            cues.clear();
+          }
+          if (cuesWithTiming.cues.size() > 0) {
+            cues.add(cuesWithTiming.cues.get(0));
+          }
+          pts = newPtsUs;
+        } else {
+          if (cuesWithTiming.cues.size() > 0) {
+            cues.add(cuesWithTiming.cues.get(0));
+          }
+        }
+      }
+    }
+    if (cues.size() > 0) {
+      cuesWithTimings.add(new CuesWithTiming(cues, pts, C.TIME_UNSET));
+      cues.clear();
+    }
+    return ImmutableList.copyOf(cuesWithTimings);
+  }
+
   @Nullable
   private static Cue readNextSection(ParsableByteArray buffer, CueBuilder cueBuilder) {
     int limit = buffer.limit();
@@ -101,7 +145,13 @@ public final class PgsParser implements SubtitleParser {
       buffer.setPosition(limit);
       return null;
     }
+    Cue cue = readSection(buffer, cueBuilder, sectionType, sectionLength);
+    buffer.setPosition(nextSectionPosition);
+    return cue;
+  }
 
+  private static Cue readSection(
+      ParsableByteArray buffer, CueBuilder cueBuilder, int sectionType, int sectionLength) {
     Cue cue = null;
     switch (sectionType) {
       case SECTION_TYPE_PALETTE:
@@ -124,9 +174,29 @@ public final class PgsParser implements SubtitleParser {
       default:
         break;
     }
-
-    buffer.setPosition(nextSectionPosition);
     return cue;
+  }
+
+  private static CuesWithTiming readNextSectionWithTiming(
+      ParsableByteArray buffer, CueBuilder cueBuilder) {
+    Assertions.checkState(buffer.readUnsignedShort() == 0x5047);
+    long ptsUs = buffer.readUnsignedInt() * 1000 / 90;
+    buffer.readUnsignedInt(); // Decoding Timestamp
+    int limit = buffer.limit();
+    int sectionType = buffer.readUnsignedByte();
+    int sectionLength = buffer.readUnsignedShort();
+
+    int nextSectionPosition = buffer.getPosition() + sectionLength;
+    if (nextSectionPosition > limit) {
+      buffer.setPosition(limit);
+      return null;
+    }
+
+    Cue cue = readSection(buffer, cueBuilder, sectionType, sectionLength);
+    buffer.setPosition(nextSectionPosition);
+    return new CuesWithTiming(
+        cue == null ? Collections.emptyList() : Collections.singletonList(cue),
+        ptsUs, C.TIME_UNSET);
   }
 
   private static final class CueBuilder {
