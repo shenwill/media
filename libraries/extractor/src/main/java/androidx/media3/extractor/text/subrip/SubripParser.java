@@ -31,6 +31,8 @@ import androidx.media3.extractor.text.CuesWithTiming;
 import androidx.media3.extractor.text.SubtitleParser;
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
+
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
@@ -81,7 +83,14 @@ public final class SubripParser implements SubtitleParser {
   @Override
   public ImmutableList<CuesWithTiming> parse(byte[] data, int offset, int length) {
     ImmutableList.Builder<CuesWithTiming> cues = new ImmutableList.Builder<>();
-
+    if (length > 512) { // guess it is a side-loading file, not extracted from media container
+      byte[] bytes = bytesToUtf8Bytes(data, offset, length);
+      if (bytes != null) {
+        data = bytes;
+        offset = 0;
+        length = data.length;
+      }
+    }
     parsableByteArray.reset(data, /* limit= */ offset + length);
     parsableByteArray.setPosition(offset);
     Charset charset = detectUtfCharset(parsableByteArray);
@@ -275,5 +284,31 @@ public final class SubripParser implements SubtitleParser {
         // Should never happen.
         throw new IllegalArgumentException();
     }
+  }
+
+  // return null means unchanged
+  public static byte[] bytesToUtf8Bytes(byte[] bytes, int offset, int length) {
+    if (bytes == null || bytes.length == 0 || length == 0) {
+      return bytes;
+    }
+    try {
+      if (bytes[offset] == (byte) 0xFE && bytes[offset + 1] == (byte) 0xFF) {
+        return new String(bytes, offset, length, "UTF-16BE").getBytes();
+      } else if (bytes[offset] == (byte) 0xFF && bytes[offset + 1] == (byte) 0xFE) {
+        return new String(bytes, "UTF-16LE").getBytes();
+      }
+    } catch (UnsupportedEncodingException e) {
+    }
+    String[] charsets = {"UTF-8", "GBK", "Big5"};
+    for (int i = 0; i < charsets.length; i++) {
+      try {
+        String s = new String(bytes, offset, length, charsets[i]);
+        if (s.indexOf("\uFFFD") < 0 && s.indexOf("\uF815") < 0) {
+          return i == 0 ? null : s.getBytes();
+        }
+      } catch (Exception e) {
+      }
+    }
+    return null;
   }
 }
