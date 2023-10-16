@@ -21,6 +21,8 @@ import androidx.media3.common.text.Cue;
 import androidx.media3.common.util.Assertions;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.decoder.DecoderOutputBuffer;
+
+import java.util.ArrayList;
 import java.util.List;
 
 /** Base class for {@link SubtitleDecoder} output buffers. */
@@ -29,6 +31,8 @@ public abstract class SubtitleOutputBuffer extends DecoderOutputBuffer implement
 
   @Nullable private Subtitle subtitle;
   private long subsampleOffsetUs;
+
+  private List<List<Cue>> pastCues = new ArrayList();
 
   /**
    * Sets the content of the output buffer, consisting of a {@link Subtitle} and associated
@@ -63,12 +67,32 @@ public abstract class SubtitleOutputBuffer extends DecoderOutputBuffer implement
 
   @Override
   public List<Cue> getCues(long timeUs) {
-    return Assertions.checkNotNull(subtitle).getCues(timeUs - subsampleOffsetUs);
+    List<Cue> cues = Assertions.checkNotNull(subtitle).getCues(timeUs - subsampleOffsetUs);
+    boolean drawn = false;
+    for (Cue cue : cues) {
+      if (cue.bitmapDrawContext != null && cue.bitmap == null) {
+        cue.bitmap = cue.bitmapDrawContext.draw();
+        drawn = true;
+      }
+    }
+    if (drawn) {
+      pastCues.add(cues);
+    }
+    if (pastCues.size() > 1) {
+      List<Cue> cuesToShrink = pastCues.get(0);
+      for (Cue cue : cuesToShrink) {
+        if (cue.bitmapDrawContext != null) {
+          cue.bitmap = null;
+        }
+      }
+    }
+    return cues;
   }
 
   @Override
   public void clear() {
     super.clear();
+    pastCues.clear();
     subtitle = null;
   }
 }

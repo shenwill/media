@@ -18,6 +18,7 @@ package androidx.media3.extractor.text.pgs;
 import static java.lang.Math.min;
 
 import android.graphics.Bitmap;
+
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.text.Cue;
@@ -27,7 +28,9 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 import androidx.media3.extractor.text.CuesWithTiming;
 import androidx.media3.extractor.text.SubtitleParser;
+
 import com.google.common.collect.ImmutableList;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -331,34 +334,17 @@ public final class PgsParser implements SubtitleParser {
           || !colorsSet) {
         return null;
       }
-      // Build the bitmapData.
+
+      PgsParser.RleBitmapContext bitmapContext = new PgsParser.RleBitmapContext(
+          bitmapWidth, bitmapHeight, colors);
       bitmapData.setPosition(0);
-      int[] argbBitmapData = new int[bitmapWidth * bitmapHeight];
-      int argbBitmapDataIndex = 0;
-      while (argbBitmapDataIndex < argbBitmapData.length) {
-        int colorIndex = bitmapData.readUnsignedByte();
-        if (colorIndex != 0) {
-          argbBitmapData[argbBitmapDataIndex++] = colors[colorIndex];
-        } else {
-          int switchBits = bitmapData.readUnsignedByte();
-          if (switchBits != 0) {
-            int runLength =
-                (switchBits & 0x40) == 0
-                    ? (switchBits & 0x3F)
-                    : (((switchBits & 0x3F) << 8) | bitmapData.readUnsignedByte());
-            int color = (switchBits & 0x80) == 0 ? 0 : colors[bitmapData.readUnsignedByte()];
-            Arrays.fill(
-                argbBitmapData, argbBitmapDataIndex, argbBitmapDataIndex + runLength, color);
-            argbBitmapDataIndex += runLength;
-          }
-        }
-      }
-      Bitmap bitmap =
-          Bitmap.createBitmap(argbBitmapData, bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888);
+      bitmapContext.buffer = new ParsableByteArray(bitmapData.bytesLeft());
+      bitmapData.readBytes(bitmapContext.buffer.getData(), 0, bitmapData.bytesLeft());
+
       PgsObject object = objects.get(bitmapId);
       // Build the cue.
       return object == null ? null : new Cue.Builder()
-          .setBitmap(bitmap)
+          .setBitmapDrawContext(bitmapContext)
           .setPosition((float) object.positionX / planeWidth)
           .setPositionAnchor(Cue.ANCHOR_TYPE_START)
           .setLine((float) object.positionY / planeHeight, Cue.LINE_TYPE_FRACTION)
@@ -393,6 +379,51 @@ public final class PgsParser implements SubtitleParser {
       int windowId;
       int positionX;
       int positionY;
+    }
+  }
+
+  public static final class RleBitmapContext implements Cue.IBitmapDrawContext {
+
+    ParsableByteArray buffer;
+    final int bitmapWidth, bitmapHeight;
+    final int[] colors;
+
+    public RleBitmapContext(int bitmapWidth, int bitmapHeight, int[] colors) {
+      this.bitmapWidth = bitmapWidth;
+      this.bitmapHeight = bitmapHeight;
+      this.colors = Arrays.copyOf(colors, colors.length);
+    }
+
+    public Bitmap draw(ParsableByteArray bitmapData) {
+      // Build the bitmapData.
+      bitmapData.setPosition(0);
+      int[] argbBitmapData = new int[bitmapWidth * bitmapHeight];
+      int argbBitmapDataIndex = 0;
+      while (argbBitmapDataIndex < argbBitmapData.length) {
+        int colorIndex = bitmapData.readUnsignedByte();
+        if (colorIndex != 0) {
+          argbBitmapData[argbBitmapDataIndex++] = colors[colorIndex];
+        } else {
+          int switchBits = bitmapData.readUnsignedByte();
+          if (switchBits != 0) {
+            int runLength =
+                (switchBits & 0x40) == 0
+                    ? (switchBits & 0x3F)
+                    : (((switchBits & 0x3F) << 8) | bitmapData.readUnsignedByte());
+            int color = (switchBits & 0x80) == 0 ? 0 : colors[bitmapData.readUnsignedByte()];
+            Arrays.fill(
+                argbBitmapData, argbBitmapDataIndex, argbBitmapDataIndex + runLength, color);
+            argbBitmapDataIndex += runLength;
+          }
+        }
+      }
+      return Bitmap.createBitmap(
+          argbBitmapData, bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888);
+    }
+
+    @Override
+    public Bitmap draw() {
+      return draw(buffer);
     }
   }
 }

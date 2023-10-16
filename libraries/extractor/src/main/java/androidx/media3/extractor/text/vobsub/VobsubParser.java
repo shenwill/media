@@ -83,7 +83,7 @@ public final class VobsubParser implements SubtitleParser {
         buffer.setPosition(cueBuilder.fileOffsets.get(i));
         spuBufferFromMpegStream(spuBuffer, buffer, cueBuilder);
         cueBuilder.resetBmp();
-        Cue cue = readSpu(spuBuffer, cueBuilder);
+        Cue cue = readSpu(spuBuffer, cueBuilder, false);
         spuBuffer.reset(new byte[0]);
         if (cue != null) {
           cuesWithTimings.add(new CuesWithTiming(ImmutableList.of(cue),
@@ -95,7 +95,7 @@ public final class VobsubParser implements SubtitleParser {
       return ImmutableList.copyOf(cuesWithTimings);
     }
     cueBuilder.resetBmp();
-    Cue cue = readSpu(buffer, cueBuilder);
+    Cue cue = readSpu(buffer, cueBuilder, true);
     return cue == null ? ImmutableList.of() : ImmutableList.of(
         new CuesWithTiming(ImmutableList.of(cue), C.TIME_UNSET, cueBuilder.dateStop * 10000));
   }
@@ -149,7 +149,7 @@ public final class VobsubParser implements SubtitleParser {
   }
 
   @Nullable
-  private static Cue readSpu(ParsableByteArray buffer, CueBuilder cueBuilder) {
+  private static Cue readSpu(ParsableByteArray buffer, CueBuilder cueBuilder, boolean draw) {
     int spuLength = buffer.readUnsignedShort();
     Assertions.checkState(spuLength == buffer.bytesLeft() + 2);
     int controlSectionOffset = buffer.readUnsignedShort();
@@ -158,8 +158,7 @@ public final class VobsubParser implements SubtitleParser {
     cueBuilder.parseControlSection(buffer);
     buffer.setPosition(graphicDataOffset);
 
-    Cue cue = cueBuilder.build(buffer);
-    cueBuilder.resetBmp();
+    Cue cue = cueBuilder.build(buffer, draw);
 
     return cue;
   }
@@ -184,6 +183,8 @@ public final class VobsubParser implements SubtitleParser {
     private int bitmapHeight;
     private List<Long> timestamps = new ArrayList();
     private List<Integer> fileOffsets = new ArrayList();
+    private ParsableByteArray buffer;
+    private int bufferLimit;
 
     public CueBuilder() {
       colors = new int[16];
@@ -308,7 +309,7 @@ public final class VobsubParser implements SubtitleParser {
     }
 
     @Nullable
-    public Cue build(ParsableByteArray buffer) {
+    public Cue build(ParsableByteArray buffer, boolean draw) {
       if (planeWidth == 0
           || planeHeight == 0
           || bitmapWidth == 0
@@ -318,11 +319,19 @@ public final class VobsubParser implements SubtitleParser {
         return null;
       }
 
-      Bitmap bitmap = draw(buffer);
+      Bitmap bitmap = null;
+      RleBitmapContext bitmapContext = new RleBitmapContext(
+          bitmapWidth, bitmapHeight, dataOffsetEven, dataOffsetOdd, alpha, colors, palette);
+      if (draw) {
+        bitmap = bitmapContext.draw(buffer);
+      } else {
+        bitmapContext.buffer = new ParsableByteArray(buffer.getData());
+      }
 
       // Build the cue.
-      return new Cue.Builder()
+      Cue cue = new Cue.Builder()
           .setBitmap(bitmap)
+          .setBitmapDrawContext(draw ? null : bitmapContext)
           .setPosition((float) bitmapX / planeWidth)
           .setPositionAnchor(Cue.ANCHOR_TYPE_START)
           .setLine((float) bitmapY / planeHeight, Cue.LINE_TYPE_FRACTION)
@@ -330,9 +339,36 @@ public final class VobsubParser implements SubtitleParser {
           .setSize((float) bitmapWidth / planeWidth)
           .setBitmapHeight((float) bitmapHeight / planeHeight)
           .build();
+      return cue;
     }
 
-    private Bitmap draw(ParsableByteArray buffer) {
+    public void resetBmp() {
+      bitmapX = 0;
+      bitmapY = 0;
+      bitmapWidth = 0;
+      bitmapHeight = 0;
+    }
+  }
+
+  public static final class RleBitmapContext implements Cue.IBitmapDrawContext {
+
+    ParsableByteArray buffer;
+    final int bitmapWidth, bitmapHeight, dataOffsetEven, dataOffsetOdd;
+    final int[] alpha, colors, palette;
+
+    public RleBitmapContext(int bitmapWidth, int bitmapHeight,
+                             int dataOffsetEven, int dataOffsetOdd,
+                             int[] alpha, int[] colors, int[] palette) {
+      this.bitmapWidth = bitmapWidth;
+      this.bitmapHeight = bitmapHeight;
+      this.dataOffsetEven = dataOffsetEven;
+      this.dataOffsetOdd = dataOffsetOdd;
+      this.alpha = Arrays.copyOf(alpha, alpha.length);
+      this.colors = colors;
+      this.palette = Arrays.copyOf(palette, palette.length);
+    }
+
+    public Bitmap draw(ParsableByteArray buffer) {
       int[] argbBitmapData = new int[bitmapWidth * bitmapHeight];
       buffer.setPosition(dataOffsetEven);
       draw(buffer, argbBitmapData, 0, 0);
@@ -345,7 +381,7 @@ public final class VobsubParser implements SubtitleParser {
     private void draw(ParsableByteArray buffer, int[] argbBitmapData, int x, int y) {
       int[] palette = new int[4];
       for (int i = 0; i < palette.length; i++) {
-        palette[i] = ((this.alpha[i] * 17) << 24) | colors[this.palette[i]];
+        palette[i] = ((alpha[i] * 17) << 24) | colors[this.palette[i]];
       }
       while (y < bitmapHeight) {
         boolean drawToEnd = false;
@@ -381,11 +417,9 @@ public final class VobsubParser implements SubtitleParser {
       }
     }
 
-    public void resetBmp() {
-      bitmapX = 0;
-      bitmapY = 0;
-      bitmapWidth = 0;
-      bitmapHeight = 0;
+    @Override
+    public Bitmap draw() {
+      return draw(buffer);
     }
   }
 }

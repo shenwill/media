@@ -454,6 +454,11 @@ public abstract class BasePlayer implements Player {
         : timeline.getWindow(getCurrentMediaItemIndex(), window).getDurationMs();
   }
 
+  @Override
+  public void setVideoDelayMS(long delayMS) {
+
+  }
+
   private @RepeatMode int getRepeatModeForNavigation() {
     @RepeatMode int repeatMode = getRepeatMode();
     return repeatMode == REPEAT_MODE_ONE ? REPEAT_MODE_OFF : repeatMode;

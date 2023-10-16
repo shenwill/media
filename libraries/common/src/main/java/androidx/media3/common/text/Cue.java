@@ -173,7 +173,13 @@ public final class Cue implements Bundleable {
   @Nullable public final Alignment multiRowAlignment;
 
   /** The cue image, or null if this is a text cue. */
-  @Nullable public final Bitmap bitmap;
+  @Nullable public Bitmap bitmap;
+
+  public IBitmapDrawContext bitmapDrawContext;
+
+  public interface IBitmapDrawContext {
+    Bitmap draw();
+  }
 
   /**
    * The position of the cue box within the viewport in the direction orthogonal to the writing
@@ -308,6 +314,7 @@ public final class Cue implements Bundleable {
       @Nullable Alignment textAlignment,
       @Nullable Alignment multiRowAlignment,
       @Nullable Bitmap bitmap,
+      @Nullable IBitmapDrawContext bitmapDrawContext,
       float line,
       @LineType int lineType,
       @AnchorType int lineAnchor,
@@ -323,7 +330,7 @@ public final class Cue implements Bundleable {
       float shearDegrees) {
     // Exactly one of text or bitmap should be set.
     if (text == null) {
-      Assertions.checkNotNull(bitmap);
+      Assertions.checkState(bitmap != null || bitmapDrawContext != null);
     } else {
       Assertions.checkArgument(bitmap == null);
     }
@@ -350,6 +357,7 @@ public final class Cue implements Bundleable {
     this.textSize = textSize;
     this.verticalType = verticalType;
     this.shearDegrees = shearDegrees;
+    this.bitmapDrawContext = bitmapDrawContext;
   }
 
   /** Returns a new {@link Cue.Builder} initialized with the same values as this Cue. */
@@ -415,6 +423,7 @@ public final class Cue implements Bundleable {
   public static final class Builder {
     @Nullable private CharSequence text;
     @Nullable private Bitmap bitmap;
+    @Nullable private IBitmapDrawContext bitmapDrawContext;
     @Nullable private Alignment textAlignment;
     @Nullable private Alignment multiRowAlignment;
     private float line;
@@ -453,6 +462,7 @@ public final class Cue implements Bundleable {
     private Builder(Cue cue) {
       text = cue.text;
       bitmap = cue.bitmap;
+      bitmapDrawContext = cue.bitmapDrawContext;
       textAlignment = cue.textAlignment;
       multiRowAlignment = cue.multiRowAlignment;
       line = cue.line;
@@ -514,6 +524,11 @@ public final class Cue implements Bundleable {
     @Nullable
     public Bitmap getBitmap() {
       return bitmap;
+    }
+
+    public Builder setBitmapDrawContext(IBitmapDrawContext bitmapDrawContext) {
+      this.bitmapDrawContext = bitmapDrawContext;
+      return this;
     }
 
     /**
@@ -807,6 +822,7 @@ public final class Cue implements Bundleable {
           textAlignment,
           multiRowAlignment,
           bitmap,
+          bitmapDrawContext,
           line,
           lineType,
           lineAnchor,
