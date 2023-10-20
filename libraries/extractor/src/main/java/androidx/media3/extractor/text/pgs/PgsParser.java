@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.Inflater;
 
@@ -104,35 +105,38 @@ public final class PgsParser implements SubtitleParser {
     buffer.reset(data, /* limit= */ offset + length);
     buffer.setPosition(offset);
     ArrayList<CuesWithTiming> cuesWithTimings = new ArrayList<>();
-    ArrayList<Cue> cues = new ArrayList<>();
-    long pts = C.TIME_UNSET;
+    ArrayList<CuesWithTiming> displaySetCuesWithTimings = new ArrayList<>();
     while (buffer.bytesLeft() >= 3) {
-      CuesWithTiming cuesWithTiming = readNextSectionWithTiming(buffer, cueBuilder);
-      if (cuesWithTiming != null) {
-        if (pts == C.TIME_UNSET) {
-          pts = cuesWithTiming.startTimeUs;
+      cueBuilder.reset();
+      displaySetCuesWithTimings.clear();
+      // read whole one display set. the identify section (Presentation Composition Segment)
+      // should always exist and return as index 0 item wrapped in CuesWithTiming
+      while (readNextSectionWithTiming(displaySetCuesWithTimings, buffer, cueBuilder)) {
+      }
+      if (displaySetCuesWithTimings.size() > 0) {
+        // cues contain pictures
+        List<Cue> cues = new ArrayList<>(displaySetCuesWithTimings.size());
+        for (CuesWithTiming cuesWithTiming : displaySetCuesWithTimings) {
+          if (cuesWithTiming.cues.size() > 0) {
+            cues.add(cuesWithTiming.cues.get(0));
+          }
         }
-        if (cuesWithTiming.startTimeUs - pts > 20000) {
-          long newPtsUs = cuesWithTiming.startTimeUs;
-          if (cues.size() > 0) {
-            // android.util.Log.e("", "new PTS " + newPtsUs + " completed cues: " + cues.size());
-            cuesWithTimings.add(new CuesWithTiming(cues, pts, newPtsUs - pts));
-            cues.clear();
+        // no picture cues means ending of previous picture cue
+        if (cues.size() == 0) {
+          if (cuesWithTimings.size() > 0) {
+            CuesWithTiming last = cuesWithTimings.get(cuesWithTimings.size() - 1);
+            long durationUs = displaySetCuesWithTimings.get(0).startTimeUs - last.startTimeUs;
+            if (durationUs > 0) {
+              cuesWithTimings.remove(cuesWithTimings.size() - 1);
+              cuesWithTimings.add(
+                  new CuesWithTiming(last.cues, last.startTimeUs, durationUs));
+            }
           }
-          if (cuesWithTiming.cues.size() > 0) {
-            cues.add(cuesWithTiming.cues.get(0));
-          }
-          pts = newPtsUs;
-        } else {
-          if (cuesWithTiming.cues.size() > 0) {
-            cues.add(cuesWithTiming.cues.get(0));
-          }
+        } else { // cues.size() > 0
+          cuesWithTimings.add(
+              new CuesWithTiming(cues, displaySetCuesWithTimings.get(0).startTimeUs, C.TIME_UNSET));
         }
       }
-    }
-    if (cues.size() > 0) {
-      cuesWithTimings.add(new CuesWithTiming(cues, pts, C.TIME_UNSET));
-      cues.clear();
     }
     return ImmutableList.copyOf(cuesWithTimings);
   }
@@ -180,10 +184,10 @@ public final class PgsParser implements SubtitleParser {
     return cue;
   }
 
-  private static CuesWithTiming readNextSectionWithTiming(
-      ParsableByteArray buffer, CueBuilder cueBuilder) {
+  private static boolean readNextSectionWithTiming(
+      List<CuesWithTiming> cuesWithTimings, ParsableByteArray buffer, CueBuilder cueBuilder) {
     Assertions.checkState(buffer.readUnsignedShort() == 0x5047);
-    long ptsUs = buffer.readUnsignedInt() * 1000 / 90;
+    long ptsUs = buffer.readUnsignedInt() * 1000L / 90;
     buffer.readUnsignedInt(); // Decoding Timestamp
     int limit = buffer.limit();
     int sectionType = buffer.readUnsignedByte();
@@ -192,14 +196,18 @@ public final class PgsParser implements SubtitleParser {
     int nextSectionPosition = buffer.getPosition() + sectionLength;
     if (nextSectionPosition > limit) {
       buffer.setPosition(limit);
-      return null;
+      return false;
     }
 
     Cue cue = readSection(buffer, cueBuilder, sectionType, sectionLength);
     buffer.setPosition(nextSectionPosition);
-    return new CuesWithTiming(
-        cue == null ? Collections.emptyList() : Collections.singletonList(cue),
-        ptsUs, C.TIME_UNSET);
+
+    if (cue != null || cuesWithTimings.size() == 0) { // first one is identifier, use this pts
+      cuesWithTimings.add(new CuesWithTiming(cue == null ? Collections.EMPTY_LIST
+          : Collections.singletonList(cue), ptsUs, C.TIME_UNSET));
+    }
+
+    return cueBuilder.planeWidth != 0;
   }
 
   private static final class CueBuilder {
@@ -284,13 +292,16 @@ public final class PgsParser implements SubtitleParser {
     }
 
     private void parseIdentifierSection(ParsableByteArray buffer, int sectionLength) {
-      if (sectionLength < 19) {
+      if (sectionLength < 11) {
         return;
       }
       planeWidth = buffer.readUnsignedShort();
       planeHeight = buffer.readUnsignedShort();
       buffer.skipBytes(6);
       int objectLength = buffer.readUnsignedByte();
+      if (objectLength == 0) {
+        return;
+      }
       objects = new HashMap(objectLength);
       for (int i = 0; i < objectLength; i++) {
         PgsObject object = new PgsObject();
