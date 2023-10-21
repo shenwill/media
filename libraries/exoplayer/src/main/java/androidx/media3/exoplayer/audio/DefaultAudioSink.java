@@ -410,7 +410,7 @@ public final class DefaultAudioSink implements AudioSink {
   public static final float MIN_PLAYBACK_SPEED = 0.1f;
 
   /** The maximum allowed playback speed. Higher values will be constrained to fall in range. */
-  public static final float MAX_PLAYBACK_SPEED = 8f;
+  public static final float MAX_PLAYBACK_SPEED = 100f;
 
   /** The minimum allowed pitch factor. Lower values will be constrained to fall in range. */
   public static final float MIN_PITCH = 0.1f;
