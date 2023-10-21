@@ -40,6 +40,7 @@
     <item>1.25배속</item>
     <item>1.5배속</item>
     <item>2배속</item>
+    <item>MAX</item>
   </string-array>
   <string name="exo_track_selection_title_video">동영상</string>
   <string name="exo_track_selection_title_audio">오디오</string>

@@ -82,6 +82,7 @@
     <item>1.25x</item>
     <item>1.5x</item>
     <item>2x</item>
+    <item>max</item>
   </string-array>
   <!-- LINT.ThenChange(../../java/androidx/media3/ui/PlayerControlView.java:playback_speeds) -->
   <!-- Shown to indicate a custom playback speed. [CHAR_LIMIT=16] -->
