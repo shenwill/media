@@ -186,7 +186,7 @@ public final class AviExtractor implements Extractor {
   @Override
   public int read(ExtractorInput input, PositionHolder seekPosition) throws IOException {
     if (resolvePendingReposition(input, seekPosition)) {
-      return RESULT_SEEK;
+      return seekPosition.position < input.getLength() ? RESULT_SEEK : RESULT_END_OF_INPUT;
     }
     switch (state) {
       case STATE_SKIPPING_TO_HDRL:
