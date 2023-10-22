@@ -129,7 +129,7 @@ public final class VobsubParser implements SubtitleParser {
         int headDataLength = buffer.readUnsignedByte();
         buffer.skipBytes(headDataLength);
         int dataLength = packageLength - 3 - headDataLength;
-        Assertions.checkState(buffer.readUnsignedByte() == 0x20);
+        Assertions.checkState((buffer.readUnsignedByte() & 0x20) == 0x20);
         if (spuBuffer.getData().length == 0) {
           spuBuffer.reset(new byte[buffer.readUnsignedShort()], dataLength - 1);
           buffer.setPosition(buffer.getPosition() - 2);
