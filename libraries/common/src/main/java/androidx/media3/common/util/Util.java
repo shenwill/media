@@ -2442,6 +2442,12 @@ public final class Util {
    */
   @UnstableApi
   public static String getStringForTime(StringBuilder builder, Formatter formatter, long timeMs) {
+    return getStringForTime(builder, formatter, timeMs, false);
+  }
+
+  @UnstableApi
+  public static String getStringForTime(StringBuilder builder, Formatter formatter, long timeMs,
+                                        boolean showMillis) {
     if (timeMs == C.TIME_UNSET) {
       timeMs = 0;
     }
@@ -2452,6 +2458,12 @@ public final class Util {
     long minutes = (totalSeconds / 60) % 60;
     long hours = totalSeconds / 3600;
     builder.setLength(0);
+    if (showMillis) {
+      long millis = timeMs % 1000;
+      return hours > 0
+          ? formatter.format("%s%d:%02d:%02d.%03d", prefix, hours, minutes, seconds, millis).toString()
+          : formatter.format("%s%02d:%02d.%03d", prefix, minutes, seconds, millis).toString();
+    }
     return hours > 0
         ? formatter.format("%s%d:%02d:%02d", prefix, hours, minutes, seconds).toString()
         : formatter.format("%s%02d:%02d", prefix, minutes, seconds).toString();
