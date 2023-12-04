@@ -637,6 +637,37 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
     return contentFrame.getResizeMode();
   }
 
+  public void zoomVideo(int widthZoomed, int heightZoomed) {
+    setContentViewSize(
+        contentFrame.getWidth() + widthZoomed,
+        contentFrame.getHeight() + heightZoomed);
+  }
+
+  public void resetZoomVideo() {
+    ViewGroup.LayoutParams params = contentFrame.getLayoutParams();
+    params.height = ViewGroup.LayoutParams.MATCH_PARENT;
+    params.width = ViewGroup.LayoutParams.MATCH_PARENT;
+    contentFrame.setLayoutParams(params);
+    setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+  }
+
+  public int getContentViewHeight() {
+    return contentFrame.getMeasuredHeight();
+  }
+
+  public int getContentViewWidth() {
+    return contentFrame.getMeasuredWidth();
+  }
+
+
+  public void setContentViewSize(int width, int height) {
+    setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+    ViewGroup.LayoutParams params = contentFrame.getLayoutParams();
+    params.height = height;
+    params.width = width;
+    contentFrame.setLayoutParams(params);
+  }
+
   /**
    * @deprecated Use {@link #getArtworkDisplayMode()} instead.
    */
