@@ -104,6 +104,7 @@ public interface EbmlProcessor {
    * @throws ParserException If a parsing error occurs.
    */
   void startMasterElement(int id, long contentPosition, long contentSize) throws ParserException;
+  void startMasterElementPosition(int id, long position) throws ParserException;
 
   /**
    * Called when the end of a master element is encountered.

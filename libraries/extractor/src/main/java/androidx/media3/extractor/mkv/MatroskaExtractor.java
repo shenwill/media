@@ -65,7 +65,11 @@ import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.annotation.Documented;
@@ -506,9 +510,13 @@ public class MatroskaExtractor implements Extractor {
   private boolean seekForCues;
   private long cuesContentPosition = C.INDEX_UNSET;
   private long seekPositionAfterBuildingCues = C.INDEX_UNSET;
+  private long streamLength = C.LENGTH_UNSET;
+  private long clusterStartPosition = C.LENGTH_UNSET;
   private long clusterTimecodeUs = C.TIME_UNSET;
   @Nullable private LongArray cueTimesUs;
   @Nullable private LongArray cueClusterPositions;
+  @Nullable private LongArray collectedTimesUs;
+  @Nullable private LongArray collectedClusterPositions;
   private boolean seenClusterPositionForCurrentCuePoint;
 
   // Reading state.
@@ -602,6 +610,9 @@ public class MatroskaExtractor implements Extractor {
   @Override
   public final int read(ExtractorInput input, PositionHolder seekPosition) throws IOException {
     haveOutputSample = false;
+    if (streamLength == C.LENGTH_UNSET) {
+      streamLength = input.getLength();
+    }
     boolean continueReading = true;
     while (continueReading && !haveOutputSample) {
       continueReading = reader.read(input);
@@ -765,6 +776,14 @@ public class MatroskaExtractor implements Extractor {
         || id == ID_ATTACHMENTS || id == ID_CHAPTERS;
   }
 
+  protected void startMasterElementPosition(int id, long position)
+      throws ParserException {
+    assertInitialized();
+    if (id == ID_CLUSTER) {
+      clusterStartPosition = position - segmentContentPosition;
+    }
+  }
+
   /**
    * Called when the start of a master element is encountered.
    *
@@ -803,7 +822,22 @@ public class MatroskaExtractor implements Extractor {
           } else {
             // We don't know where the Cues element is located. It's most likely omitted. Allow
             // playback, but disable seeking.
-            extractorOutput.seekMap(new SeekMap.Unseekable(durationUs));
+            // extractorOutput.seekMap(new SeekMap.Unseekable(durationUs));
+            boolean cueUpdated = false;
+            if (initCollectedInfoFromCache(streamLength, durationUs)) {
+              cueUpdated = true;
+            } else {
+              if (collectedTimesUs == null) {
+                collectedTimesUs = new LongArray();
+              }
+              if (collectedClusterPositions == null) {
+                collectedClusterPositions = new LongArray();
+              }
+              cueUpdated = appendCollectedCue(0, clusterStartPosition);
+            }
+            if (cueUpdated) {
+              extractorOutput.seekMap(buildSeekMap(collectedTimesUs, collectedClusterPositions));
+            }
             sentSeekMap = true;
           }
         }
@@ -1128,6 +1162,9 @@ public class MatroskaExtractor implements Extractor {
         break;
       case ID_TIME_CODE:
         clusterTimecodeUs = scaleTimecodeToUs(value);
+        if (appendCollectedCue(clusterTimecodeUs, clusterStartPosition)) {
+          extractorOutput.seekMap(buildSeekMap(collectedTimesUs, collectedClusterPositions));
+        }
         break;
       case ID_BLOCK_DURATION:
         blockDurationUs = scaleTimecodeToUs(value);
@@ -2091,6 +2128,118 @@ public class MatroskaExtractor implements Extractor {
     return new ChunkIndex(sizes, offsets, durationsUs, timesUs);
   }
 
+  private File getCacheFileForCues(long streamLength, long durationUs, boolean write) {
+    if (streamLength == C.LENGTH_UNSET || durationUs == C.LENGTH_UNSET || sContext == null) {
+      return null;
+    }
+    try {
+      File cacheDir = sContext.getExternalCacheDir();
+      if (cacheDir == null) {
+        cacheDir = sContext.getCacheDir();
+      }
+      if (cacheDir == null) {
+        return null;
+      }
+      File cacheCueDir = new File(sContext.getExternalCacheDir(), "mkv_cues");
+      if (cacheCueDir == null) {
+        return null;
+      }
+      if (write && !cacheCueDir.exists()) {
+        cacheCueDir.mkdirs();
+      }
+      String fileName = streamLength + "_" + durationUs;
+      File file = new File(cacheCueDir, fileName);
+      return file;
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  private boolean initCollectedInfoFromCache(long streamLength, long durationUs) {
+    File file = getCacheFileForCues(streamLength, durationUs, false);
+    if (file == null) {
+      return false;
+    }
+    if (file.exists() && file.canRead()) {
+      int size = (int) (file.length() / 8 / 2);
+      if (size <= 1) {
+        return false;
+      }
+      DataInputStream inputStream = null;
+      try {
+        inputStream = new DataInputStream(new FileInputStream(file));
+        collectedTimesUs = new LongArray();
+        collectedClusterPositions = new LongArray();
+        for (int i = 0; i < size; i++){
+          collectedTimesUs.add(inputStream.readLong());
+          collectedClusterPositions.add(inputStream.readLong());
+        }
+        return true;
+      } catch (Exception e) {
+        collectedTimesUs = null;
+        collectedClusterPositions = null;
+      } finally {
+        if (inputStream != null) {
+          try {
+            inputStream.close();
+          } catch (IOException e) {
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private boolean saveCollectedInfoToCache(long streamLength, long durationUs) {
+    if (collectedTimesUs == null || collectedClusterPositions == null
+        || collectedTimesUs.size() != collectedClusterPositions.size()
+        || collectedTimesUs.size() <= 1
+        || collectedClusterPositions.size() <= 1) {
+      return false;
+    }
+    File file = getCacheFileForCues(streamLength, durationUs, true);
+    if (file == null) {
+      return false;
+    }
+    int size = collectedTimesUs.size();
+    int start = file.exists() ? (int) (file.length() / 8 / 2) : 0;
+    if (size - start > 0) {
+      DataOutputStream outputStream = null;
+      try {
+        outputStream = new DataOutputStream(new FileOutputStream(file, file.exists()));
+        for (int i = start; i < size; i++) {
+          outputStream.writeLong(collectedTimesUs.get(i));
+          outputStream.writeLong(collectedClusterPositions.get(i));
+        }
+        return true;
+      } catch (Exception e) {
+      } finally {
+        if (outputStream != null) {
+          try {
+            outputStream.close();
+          } catch (IOException e) {
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private boolean appendCollectedCue(long clusterTimecodeUs, long clusterPosition) {
+    if (collectedTimesUs == null || collectedClusterPositions == null) {
+      return false;
+    }
+    if (collectedTimesUs.size() == 0
+        || collectedTimesUs.get(collectedTimesUs.size() - 1) < clusterTimecodeUs) {
+      collectedTimesUs.add(clusterTimecodeUs);
+      collectedClusterPositions.add(clusterPosition);
+      saveCollectedInfoToCache(streamLength, durationUs);
+      return true;
+    }
+    return false;
+  }
+
+
   /**
    * Updates the position of the holder to Cues element's position if the extractor configuration
    * permits use of master seek entry. After building Cues sets the holder's position back to where
@@ -2203,6 +2352,12 @@ public class MatroskaExtractor implements Extractor {
     public void startMasterElement(int id, long contentPosition, long contentSize)
         throws ParserException {
       MatroskaExtractor.this.startMasterElement(id, contentPosition, contentSize);
+    }
+
+    @Override
+    public void startMasterElementPosition(int id, long position)
+        throws ParserException {
+      MatroskaExtractor.this.startMasterElementPosition(id, position);
     }
 
     @Override
@@ -2857,7 +3012,7 @@ public class MatroskaExtractor implements Extractor {
   }
 
   private static Set<MatroskaExtractorListener> sListeners = new HashSet(1);
-  private static Context sContext = null;
+  public static Context sContext = null;
 
   public static void registerListener(MatroskaExtractorListener listener, Context context) {
     sListeners.clear();

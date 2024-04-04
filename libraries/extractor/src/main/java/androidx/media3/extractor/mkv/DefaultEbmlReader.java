@@ -59,6 +59,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private @MonotonicNonNull EbmlProcessor processor;
   private @ElementState int elementState;
   private int elementId;
+  private long elementIdPosition;
   private long elementContentSize;
 
   public DefaultEbmlReader() {
@@ -90,6 +91,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       }
 
       if (elementState == ELEMENT_STATE_READ_ID) {
+        elementIdPosition = input.getPosition();
         long result = varintReader.readUnsignedVarint(input, true, false, MAX_ID_BYTES);
         if (result == C.RESULT_MAX_LENGTH_EXCEEDED) {
           result = maybeResyncToNextLevel1Element(input);
@@ -113,6 +115,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
           long elementContentPosition = input.getPosition();
           long elementEndPosition = elementContentPosition + elementContentSize;
           masterElementsStack.push(new MasterElement(elementId, elementEndPosition));
+          processor.startMasterElementPosition(elementId, elementIdPosition);
           processor.startMasterElement(elementId, elementContentPosition, elementContentSize);
           elementState = ELEMENT_STATE_READ_ID;
           return true;
