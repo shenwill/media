@@ -298,7 +298,7 @@ public final class ColorInfo implements Bundleable {
         + ")";
   }
 
-  private static String colorSpaceToString(@C.ColorSpace int colorSpace) {
+  public static String colorSpaceToString(@C.ColorSpace int colorSpace) {
     // LINT.IfChange(color_space)
     switch (colorSpace) {
       case Format.NO_VALUE:
@@ -314,7 +314,7 @@ public final class ColorInfo implements Bundleable {
     }
   }
 
-  private static String colorTransferToString(@C.ColorTransfer int colorTransfer) {
+  public static String colorTransferToString(@C.ColorTransfer int colorTransfer) {
     // LINT.IfChange(color_transfer)
     switch (colorTransfer) {
       case Format.NO_VALUE:

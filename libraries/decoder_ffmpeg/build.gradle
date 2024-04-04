@@ -14,6 +14,7 @@
 apply from: "$gradle.ext.androidxMediaSettingsDir/common_library_config.gradle"
 
 android.namespace = 'androidx.media3.decoder.ffmpeg'
+android.ndkVersion = '25.2.9519653'
 
 // Configure the native build only if ffmpeg is present to avoid gradle sync
 // failures if ffmpeg hasn't been built according to the README instructions.
