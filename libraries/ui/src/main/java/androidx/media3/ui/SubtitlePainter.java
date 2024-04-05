@@ -25,6 +25,8 @@ import android.graphics.Paint;
 import android.graphics.Paint.Join;
 import android.graphics.Paint.Style;
 import android.graphics.Rect;
+import android.graphics.Typeface;
+import android.os.Build;
 import android.text.Layout.Alignment;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -44,8 +46,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /** Paints subtitle {@link Cue}s. */
-/* package */ final class SubtitlePainter {
+/* package */ public final class SubtitlePainter {
 
+  public static float sLetterSpacing = 0.2f;
+  public static Typeface sTypeface = null;
+  private Typeface typefaceSaved = null;
   private static final String TAG = "SubtitlePainter";
 
   /** Ratio of inner padding to font size. */
@@ -409,6 +414,17 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     if (textLayout == null || edgeLayout == null) {
       // Nothing to draw.
       return;
+    }
+
+    if (sTypeface != null) {
+      typefaceSaved = textPaint.getTypeface();
+      textPaint.setTypeface(sTypeface);
+    } else if (textPaint.getTypeface() != typefaceSaved) {
+      textPaint.setTypeface(typefaceSaved);
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      textPaint.setLetterSpacing(sLetterSpacing);
     }
 
     int saveCount = canvas.save();

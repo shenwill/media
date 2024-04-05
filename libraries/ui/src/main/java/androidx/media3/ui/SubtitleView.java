@@ -318,6 +318,10 @@ public final class SubtitleView extends FrameLayout {
     updateOutput();
   }
 
+  public float getBottomPaddingFraction() {
+    return this.bottomPaddingFraction;
+  }
+
   private float getUserCaptionFontScale() {
     if (Util.SDK_INT < 19 || isInEditMode()) {
       return 1f;
