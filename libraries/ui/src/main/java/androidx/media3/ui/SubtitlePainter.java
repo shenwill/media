@@ -48,6 +48,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 /** Paints subtitle {@link Cue}s. */
 /* package */ public final class SubtitlePainter {
 
+  public static boolean sFontBold = false;
   public static float sLetterSpacing = 0.2f;
   public static Typeface sTypeface = null;
   private Typeface typefaceSaved = null;
@@ -423,6 +424,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       textPaint.setTypeface(typefaceSaved);
     }
 
+    textPaint.setFakeBoldText(sFontBold);
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
       textPaint.setLetterSpacing(sLetterSpacing);
     }
