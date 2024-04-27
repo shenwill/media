@@ -661,7 +661,7 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
 
 
   public void setContentViewSize(int width, int height) {
-    setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+    setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
     ViewGroup.LayoutParams params = contentFrame.getLayoutParams();
     params.height = height;
     params.width = width;
