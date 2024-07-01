@@ -126,7 +126,9 @@ public final class SsaParser implements SubtitleParser {
   }
 
   @Override
-  public void reset() {}
+  public void reset() {
+    onReset(this);
+  }
 
   @Nullable
   @Override
@@ -164,6 +166,12 @@ public final class SsaParser implements SubtitleParser {
     }
 
     return cuesWithStartTimeAndDuration.build();
+  }
+
+  @Override
+  protected void finalize() throws Throwable {
+    super.finalize();
+    onRelease(this);
   }
 
   /**
@@ -593,6 +601,12 @@ public final class SsaParser implements SubtitleParser {
   public static void onReset(Object idObject) {
     for (SsaParserListener listener : sListeners) {
       listener.onReset(idObject);
+    }
+  }
+
+  public static void onRelease(Object idObject) {
+    for (SsaParserListener listener : sListeners) {
+      listener.onRelease(idObject);
     }
   }
 

@@ -71,7 +71,7 @@ public final class CaptionStyleCompat {
   public static final int USE_TRACK_COLOR_SETTINGS = 1;
 
   /** Default caption style. */
-  public static final CaptionStyleCompat DEFAULT =
+  public static CaptionStyleCompat DEFAULT =
       new CaptionStyleCompat(
           Color.WHITE,
           Color.BLACK,

@@ -15,6 +15,7 @@
  */
 package androidx.media3.ui;
 
+import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import static androidx.media3.common.Player.COMMAND_GET_CURRENT_MEDIA_ITEM;
 import static androidx.media3.common.Player.COMMAND_GET_METADATA;
 import static androidx.media3.common.Player.COMMAND_GET_TEXT;
@@ -644,7 +645,12 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
   }
 
   public void resetZoomVideo() {
-    ViewGroup.LayoutParams params = contentFrame.getLayoutParams();
+    ViewGroup.LayoutParams params = getLayoutParams();
+    params.height = MATCH_PARENT;
+    params.width = MATCH_PARENT;
+    setLayoutParams(params);
+
+    params = contentFrame.getLayoutParams();
     params.height = ViewGroup.LayoutParams.MATCH_PARENT;
     params.width = ViewGroup.LayoutParams.MATCH_PARENT;
     contentFrame.setLayoutParams(params);

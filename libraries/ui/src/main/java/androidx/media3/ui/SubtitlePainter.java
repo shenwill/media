@@ -15,6 +15,8 @@
  */
 package androidx.media3.ui;
 
+import static androidx.media3.ui.SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION;
+
 import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
@@ -358,6 +360,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       } else if (textTop < parentTop) {
         textTop = parentTop;
       }
+      textTop -= (int) (parentHeight * (bottomPaddingFraction - DEFAULT_BOTTOM_PADDING_FRACTION));
     } else {
       textTop = parentBottom - textHeight - (int) (parentHeight * bottomPaddingFraction);
     }
