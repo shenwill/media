@@ -658,13 +658,16 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
   }
 
   public int getContentViewHeight() {
-    return contentFrame.getMeasuredHeight();
+    return contentFrame.getHeight();
   }
 
   public int getContentViewWidth() {
-    return contentFrame.getMeasuredWidth();
+    return contentFrame.getWidth();
   }
 
+  public void getContentLocationOnScreen(int[] location) {
+      contentFrame.getLocationOnScreen(location);
+  }
 
   public void setContentViewSize(int width, int height) {
     setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
