@@ -935,13 +935,15 @@ import java.util.concurrent.TimeoutException;
   @Override
   public long getSeekBackIncrement() {
     verifyApplicationThread();
-    return seekBackIncrementMs;
+    return wrappingPlayer != null && wrappingPlayer.getPlayWhenReady()
+        ? seekBackIncrementMs : 1000;
   }
 
   @Override
   public long getSeekForwardIncrement() {
     verifyApplicationThread();
-    return seekForwardIncrementMs;
+    return wrappingPlayer != null && wrappingPlayer.getPlayWhenReady()
+        ? seekForwardIncrementMs : 1000;
   }
 
   @Override
