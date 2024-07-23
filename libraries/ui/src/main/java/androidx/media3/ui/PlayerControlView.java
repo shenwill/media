@@ -1237,6 +1237,7 @@ public class PlayerControlView extends FrameLayout {
     }
     long durationMs = Util.usToMs(durationUs);
     if (durationView != null) {
+      durationView.setTag(new Long(durationMs));
       durationView.setText(Util.getStringForTime(formatBuilder, formatter, durationMs));
     }
     if (timeBar != null) {
