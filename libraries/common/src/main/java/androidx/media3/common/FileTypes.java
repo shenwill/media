@@ -62,7 +62,7 @@ public final class FileTypes {
   @Target(TYPE_USE)
   @IntDef({
     UNKNOWN, AC3, AC4, ADTS, AMR, FLAC, FLV, MATROSKA, MP3, MP4, OGG, PS, TS, WAV, WEBVTT, JPEG,
-    MIDI, AVI, PNG, RM, RMVB
+    MIDI, AVI, PNG, RM, RMVB, APE
   })
   public @interface Type {}
 
@@ -122,8 +122,10 @@ public final class FileTypes {
 
   /** File type for the PNG format. */
   public static final int PNG = 17;
-  public static final int RM = 18;
-  public static final int RMVB = 19;
+
+  public static final int APE = 18;
+  public static final int RM = 19;
+  public static final int RMVB = 20;
 
   @VisibleForTesting /* package */ static final String HEADER_CONTENT_TYPE = "Content-Type";
 
@@ -133,6 +135,7 @@ public final class FileTypes {
   private static final String EXTENSION_ADTS = ".adts";
   private static final String EXTENSION_AAC = ".aac";
   private static final String EXTENSION_AMR = ".amr";
+  private static final String EXTENSION_APE = ".ape";
   private static final String EXTENSION_FLAC = ".flac";
   private static final String EXTENSION_FLV = ".flv";
   private static final String EXTENSION_MID = ".mid";
@@ -196,6 +199,8 @@ public final class FileTypes {
       case MimeTypes.AUDIO_AMR_NB:
       case MimeTypes.AUDIO_AMR_WB:
         return FileTypes.AMR;
+      case MimeTypes.AUDIO_APE:
+        return FileTypes.APE;
       case MimeTypes.AUDIO_FLAC:
         return FileTypes.FLAC;
       case MimeTypes.VIDEO_FLV:
@@ -248,6 +253,8 @@ public final class FileTypes {
       return FileTypes.ADTS;
     } else if (filename.endsWith(EXTENSION_AMR)) {
       return FileTypes.AMR;
+    } else if (filename.endsWith(EXTENSION_APE)) {
+      return FileTypes.APE;
     } else if (filename.endsWith(EXTENSION_FLAC)) {
       return FileTypes.FLAC;
     } else if (filename.endsWith(EXTENSION_FLV)) {

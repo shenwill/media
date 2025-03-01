@@ -19,6 +19,7 @@ import static androidx.media3.common.FileTypes.inferFileTypeFromResponseHeaders;
 import static androidx.media3.common.FileTypes.inferFileTypeFromUri;
 
 import android.net.Uri;
+
 import androidx.annotation.GuardedBy;
 import androidx.annotation.Nullable;
 import androidx.media3.common.FileTypes;
@@ -29,6 +30,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.util.TimestampAdjuster;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.extractor.amr.AmrExtractor;
+import androidx.media3.extractor.ape.ApeExtractor;
 import androidx.media3.extractor.avi.AviExtractor;
 import androidx.media3.extractor.flac.FlacExtractor;
 import androidx.media3.extractor.flv.FlvExtractor;
@@ -51,8 +53,10 @@ import androidx.media3.extractor.ts.PsExtractor;
 import androidx.media3.extractor.ts.TsExtractor;
 import androidx.media3.extractor.ts.TsPayloadReader;
 import androidx.media3.extractor.wav.WavExtractor;
+
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
+
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
@@ -448,6 +452,9 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
                     | (constantBitrateSeekingAlwaysEnabled
                         ? AmrExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING_ALWAYS
                         : 0)));
+        break;
+      case FileTypes.APE:
+        extractors.add(new ApeExtractor());
         break;
       case FileTypes.FLAC:
         @Nullable Extractor flacExtractor = FLAC_EXTENSION_LOADER.getExtractor(flacFlags);

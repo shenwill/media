@@ -15,6 +15,8 @@
  */
 package androidx.media3.decoder.ffmpeg;
 
+import static androidx.media3.common.util.Util.getBitDepth;
+
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
@@ -26,6 +28,7 @@ import androidx.media3.decoder.DecoderInputBuffer;
 import androidx.media3.decoder.SimpleDecoder;
 import androidx.media3.decoder.SimpleDecoderOutputBuffer;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.List;
 
 /** FFmpeg audio decoder. */
@@ -48,6 +51,7 @@ import java.util.List;
   private boolean hasOutputFormat;
   private volatile int channelCount;
   private volatile int sampleRate;
+  private @C.PcmEncoding int pcmEncoding; // This is input encoding
 
   public FfmpegAudioDecoder(
       Format format,
@@ -65,8 +69,11 @@ import java.util.List;
     extraData = getExtraData(format.sampleMimeType, format.initializationData);
     encoding = outputFloat ? C.ENCODING_PCM_FLOAT : C.ENCODING_PCM_16BIT;
     outputBufferSize = outputFloat ? OUTPUT_BUFFER_SIZE_32BIT : OUTPUT_BUFFER_SIZE_16BIT;
+    pcmEncoding = format.pcmEncoding;
+    int bitDepth = getBitDepth(pcmEncoding);
     nativeContext =
-        ffmpegInitialize(codecName, extraData, outputFloat, format.sampleRate, format.channelCount);
+        ffmpegInitialize(
+            codecName, extraData, outputFloat, format.sampleRate, bitDepth, format.channelCount);
     if (nativeContext == 0) {
       throw new FfmpegDecoderException("Initialization failed.");
     }
@@ -107,8 +114,17 @@ import java.util.List;
     }
     ByteBuffer inputData = Util.castNonNull(inputBuffer.data);
     int inputSize = inputData.limit();
-    ByteBuffer outputData = outputBuffer.init(inputBuffer.timeUs, outputBufferSize);
-    int result = ffmpegDecode(nativeContext, inputData, inputSize, outputData, outputBufferSize);
+    int outputBufferSizeFit = outputBufferSize;
+    // APE has special requirement for buffer size, which depends on the number of input samples
+    if ("ape".equals(codecName)) {
+      int bytesPerSample = getBitDepth(pcmEncoding) >> 3;
+      int channels = ffmpegGetChannelCount(nativeContext);
+      inputData.order(ByteOrder.LITTLE_ENDIAN);
+      int samples = inputData.getInt(0); // nblocks
+      outputBufferSizeFit = Math.max(outputBufferSize, samples * channels * bytesPerSample);
+    }
+    ByteBuffer outputData = outputBuffer.init(inputBuffer.timeUs, outputBufferSizeFit);
+    int result = ffmpegDecode(nativeContext, inputData, inputSize, outputData, outputBufferSizeFit);
     if (result == AUDIO_DECODER_ERROR_OTHER) {
       return new FfmpegDecoderException("Error decoding (see logcat).");
     } else if (result == AUDIO_DECODER_ERROR_INVALID_DATA) {
@@ -170,6 +186,7 @@ import java.util.List;
   private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
     switch (mimeType) {
       case MimeTypes.AUDIO_AAC:
+      case MimeTypes.AUDIO_APE:
       case MimeTypes.AUDIO_OPUS:
         return initializationData.get(0);
       case MimeTypes.AUDIO_ALAC:
@@ -218,6 +235,7 @@ import java.util.List;
       @Nullable byte[] extraData,
       boolean outputFloat,
       int rawSampleRate,
+      int rawBitsPerSample,
       int rawChannelCount);
 
   private native int ffmpegDecode(

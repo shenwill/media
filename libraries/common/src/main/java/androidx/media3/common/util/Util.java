@@ -1970,6 +1970,21 @@ public final class Util {
     }
   }
 
+  public static int getBitDepth(@C.PcmEncoding int pcmEncoding) {
+    switch (pcmEncoding) {
+      case C.ENCODING_PCM_8BIT:
+        return 8;
+      case C.ENCODING_PCM_16BIT:
+        return 16;
+      case C.ENCODING_PCM_24BIT:
+        return 24;
+      case C.ENCODING_PCM_32BIT:
+        return 32;
+      default:
+        return -1;
+    }
+  }
+
   /**
    * Returns whether {@code encoding} is one of the linear PCM encodings.
    *
@@ -2453,7 +2468,7 @@ public final class Util {
     }
     String prefix = timeMs < 0 ? "-" : "";
     timeMs = abs(timeMs);
-    long totalSeconds = (timeMs + 500) / 1000;
+    long totalSeconds = (timeMs + (showMillis ? 0 : 500)) / 1000;
     long seconds = totalSeconds % 60;
     long minutes = (totalSeconds / 60) % 60;
     long hours = totalSeconds / 3600;

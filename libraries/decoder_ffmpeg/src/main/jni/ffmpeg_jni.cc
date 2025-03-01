@@ -98,7 +98,7 @@ AVCodec *getCodecByName(JNIEnv *env, jstring codecName);
  */
 AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
                               jboolean outputFloat, jint rawSampleRate,
-                              jint rawChannelCount);
+                              jint rawBitsPerSample, jint rawChannelCount);
 
 /**
  * Decodes the packet into the output buffer, returning the number of bytes
@@ -145,14 +145,15 @@ LIBRARY_FUNC(jboolean, ffmpegHasDecoder, jstring codecName) {
 
 AUDIO_DECODER_FUNC(jlong, ffmpegInitialize, jstring codecName,
                    jbyteArray extraData, jboolean outputFloat,
-                   jint rawSampleRate, jint rawChannelCount) {
+                   jint rawSampleRate, jint rawBitsPerSample,
+                   jint rawChannelCount) {
   AVCodec *codec = getCodecByName(env, codecName);
   if (!codec) {
     LOGE("Codec not found.");
     return 0L;
   }
   return (jlong)createContext(env, codec, extraData, outputFloat, rawSampleRate,
-                              rawChannelCount);
+                              rawBitsPerSample, rawChannelCount);
 }
 
 AUDIO_DECODER_FUNC(jint, ffmpegDecode, jlong context, jobject inputData,
@@ -220,6 +221,7 @@ AUDIO_DECODER_FUNC(jlong, ffmpegReset, jlong jContext, jbyteArray extraData) {
         (jboolean)(context->request_sample_fmt == OUTPUT_FORMAT_PCM_FLOAT);
     return (jlong)createContext(env, codec, extraData, outputFloat,
                                 /* rawSampleRate= */ -1,
+                                /* rawBitsPerSample */ -1,
                                 /* rawChannelCount= */ -1);
   }
 
@@ -245,7 +247,7 @@ AVCodec *getCodecByName(JNIEnv *env, jstring codecName) {
 
 AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
                               jboolean outputFloat, jint rawSampleRate,
-                              jint rawChannelCount) {
+                              jint rawBitsPerSample, jint rawChannelCount) {
   AVCodecContext *context = avcodec_alloc_context3(codec);
   if (!context) {
     LOGE("Failed to allocate context.");
@@ -266,10 +268,14 @@ AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
     env->GetByteArrayRegion(extraData, 0, size, (jbyte *)context->extradata);
   }
   if (context->codec_id == AV_CODEC_ID_PCM_MULAW ||
+      context->codec_id == AV_CODEC_ID_APE ||
       context->codec_id == AV_CODEC_ID_PCM_ALAW) {
     context->sample_rate = rawSampleRate;
     context->channels = rawChannelCount;
     context->channel_layout = av_get_default_channel_layout(rawChannelCount);
+  }
+  if (context->codec_id == AV_CODEC_ID_APE) {
+    context->bits_per_coded_sample = rawBitsPerSample;
   }
   context->err_recognition = AV_EF_IGNORE_ERR;
   int result = avcodec_open2(context, codec, NULL);

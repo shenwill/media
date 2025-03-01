@@ -91,6 +91,7 @@ public final class MimeTypes {
   public static final String AUDIO_AMR = BASE_TYPE_AUDIO + "/amr";
   public static final String AUDIO_AMR_NB = BASE_TYPE_AUDIO + "/3gpp";
   public static final String AUDIO_AMR_WB = BASE_TYPE_AUDIO + "/amr-wb";
+  public static final String AUDIO_APE = BASE_TYPE_AUDIO + "/ape";
   public static final String AUDIO_FLAC = BASE_TYPE_AUDIO + "/flac";
   public static final String AUDIO_ALAC = BASE_TYPE_AUDIO + "/alac";
   public static final String AUDIO_MSGSM = BASE_TYPE_AUDIO + "/gsm";
@@ -460,6 +461,8 @@ public final class MimeTypes {
       return MimeTypes.AUDIO_OPUS;
     } else if (codec.startsWith("vorbis")) {
       return MimeTypes.AUDIO_VORBIS;
+    } else if (codec.startsWith("ape")) {
+      return MimeTypes.AUDIO_APE;
     } else if (codec.startsWith("flac")) {
       return MimeTypes.AUDIO_FLAC;
     } else if (codec.startsWith("stpp")) {
@@ -634,6 +637,8 @@ public final class MimeTypes {
   @UnstableApi
   public static String normalizeMimeType(String mimeType) {
     switch (mimeType) {
+      case BASE_TYPE_AUDIO + "/x-ape":
+        return AUDIO_APE;
       case BASE_TYPE_AUDIO + "/x-flac":
         return AUDIO_FLAC;
       case BASE_TYPE_AUDIO + "/mp3":

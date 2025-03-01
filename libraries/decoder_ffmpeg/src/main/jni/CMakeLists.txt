@@ -21,6 +21,10 @@ set(CMAKE_CXX_STANDARD 11)
 
 project(libffmpegJNI C CXX)
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_definitions(-g)
+endif()
+
 # Additional flags needed for "arm64-v8a" from NDK 23.1.7779620 and above.
 # See https://github.com/google/ExoPlayer/issues/9933#issuecomment-1029775358.
 if(${ANDROID_ABI} MATCHES "arm64-v8a")
