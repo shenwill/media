@@ -1290,7 +1290,7 @@ public class PlayerNotificationManager {
     builder.setContentTitle(mediaDescriptionAdapter.getCurrentContentTitle(player));
     builder.setContentText(mediaDescriptionAdapter.getCurrentContentText(player));
     builder.setSubText(mediaDescriptionAdapter.getCurrentSubText(player));
-    if (largeIcon == null) {
+    if (largeIcon == null || largeIcon.isRecycled()) {
       largeIcon =
           mediaDescriptionAdapter.getCurrentLargeIcon(
               player, new BitmapCallback(++currentNotificationTag));
