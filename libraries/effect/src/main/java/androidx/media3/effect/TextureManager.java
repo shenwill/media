@@ -20,35 +20,74 @@ package androidx.media3.effect;
 import android.graphics.Bitmap;
 import android.graphics.SurfaceTexture;
 import android.view.Surface;
+import androidx.annotation.GuardedBy;
 import androidx.annotation.Nullable;
 import androidx.media3.common.FrameInfo;
 import androidx.media3.common.OnInputFrameProcessedListener;
 import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.common.VideoFrameProcessor;
+import androidx.media3.common.util.TimestampIterator;
 
-/** Handles {@code DefaultVideoFrameProcessor}'s input. */
-/* package */ interface TextureManager extends GlShaderProgram.InputListener {
+/**
+ * Handles {@code DefaultVideoFrameProcessor}'s input.
+ *
+ * <p>All instance methods must be called from either the thread that owns {@code this} instance, or
+ * an internal GL thread.
+ */
+/* package */ abstract class TextureManager implements GlShaderProgram.InputListener {
+
+  protected final VideoFrameProcessingTaskExecutor videoFrameProcessingTaskExecutor;
+
+  private final Object lock;
+
+  // TODO(b/238302341) Remove the use of onFlushCompleteTask, block the calling thread instead.
+  @GuardedBy("lock")
+  @Nullable
+  private VideoFrameProcessingTaskExecutor.Task onFlushCompleteTask;
+
+  /**
+   * Creates a new instance.
+   *
+   * @param videoFrameProcessingTaskExecutor The {@link VideoFrameProcessingTaskExecutor}.
+   */
+  public TextureManager(VideoFrameProcessingTaskExecutor videoFrameProcessingTaskExecutor) {
+    this.videoFrameProcessingTaskExecutor = videoFrameProcessingTaskExecutor;
+    lock = new Object();
+  }
 
   /**
    * See {@link DefaultVideoFrameProcessor#setInputDefaultBufferSize}.
    *
    * <p>Only works when the input is received on a {@link SurfaceTexture}.
    */
-  default void setDefaultBufferSize(int width, int height) {
+  public void setDefaultBufferSize(int width, int height) {
     throw new UnsupportedOperationException();
   }
+
+  /**
+   * Sets the {@link GlShaderProgram} that consumes the {@link TextureManager}'s output.
+   *
+   * <p>Must be called before any method that queues input or {@link
+   * #signalEndOfCurrentInputStream()}.
+   *
+   * <p>This must only be called once.
+   */
+  public abstract void setSamplingGlShaderProgram(GlShaderProgram samplingGlShaderProgram);
 
   /**
    * Provides an input {@link Bitmap} to put into the video frames.
    *
    * @param inputBitmap The {@link Bitmap} queued to the {@code VideoFrameProcessor}.
-   * @param durationUs The duration of the bitmap in the composition, in microseconds.
    * @param frameInfo Information about the bitmap being queued.
-   * @param frameRate The rate at which to generate frames with the bitmap, in frames per second.
+   * @param inStreamOffsetsUs The times within the current stream that the bitmap should be shown
+   *     at. The timestamps should be monotonically increasing.
    * @param useHdr Whether input and/or output colors are HDR.
    */
-  default void queueInputBitmap(
-      Bitmap inputBitmap, long durationUs, FrameInfo frameInfo, float frameRate, boolean useHdr) {
+  public void queueInputBitmap(
+      Bitmap inputBitmap,
+      FrameInfo frameInfo,
+      TimestampIterator inStreamOffsetsUs,
+      boolean useHdr) {
     throw new UnsupportedOperationException();
   }
 
@@ -57,7 +96,7 @@ import androidx.media3.common.VideoFrameProcessor;
    *
    * @see VideoFrameProcessor#queueInputTexture
    */
-  default void queueInputTexture(int inputTexId, long presentationTimeUs) {
+  public void queueInputTexture(int inputTexId, long presentationTimeUs) {
     throw new UnsupportedOperationException();
   }
 
@@ -66,7 +105,7 @@ import androidx.media3.common.VideoFrameProcessor;
    *
    * @see VideoFrameProcessor#setOnInputFrameProcessedListener
    */
-  default void setOnInputFrameProcessedListener(OnInputFrameProcessedListener listener) {
+  public void setOnInputFrameProcessedListener(OnInputFrameProcessedListener listener) {
     throw new UnsupportedOperationException();
   }
 
@@ -79,7 +118,7 @@ import androidx.media3.common.VideoFrameProcessor;
    * <p>Pixels are expanded using the {@link FrameInfo#pixelWidthHeightRatio} so that the output
    * frames' pixels have a ratio of 1.
    */
-  default void setInputFrameInfo(FrameInfo inputFrameInfo) {
+  public void setInputFrameInfo(FrameInfo inputFrameInfo) {
     // Do nothing.
   }
 
@@ -88,28 +127,47 @@ import androidx.media3.common.VideoFrameProcessor;
    *
    * <p>Only works when the input is received on a {@link SurfaceTexture}.
    */
-  default Surface getInputSurface() {
+  public Surface getInputSurface() {
     throw new UnsupportedOperationException();
   }
 
   /** Informs the {@code TextureManager} that a frame will be queued. */
-  default void registerInputFrame(FrameInfo frameInfo) {
+  public void registerInputFrame(FrameInfo frameInfo) {
     throw new UnsupportedOperationException();
   }
 
   /** See {@link VideoFrameProcessor#getPendingInputFrameCount}. */
-  int getPendingFrameCount();
+  public abstract int getPendingFrameCount();
 
   /** Signals the end of the current input stream. */
-  void signalEndOfCurrentInputStream();
+  public abstract void signalEndOfCurrentInputStream();
 
   /** Sets the task to run on completing flushing, or {@code null} to clear any task. */
-  void setOnFlushCompleteListener(@Nullable VideoFrameProcessingTaskExecutor.Task task);
+  public final void setOnFlushCompleteListener(
+      @Nullable VideoFrameProcessingTaskExecutor.Task task) {
+    synchronized (lock) {
+      onFlushCompleteTask = task;
+    }
+  }
+
+  @Override
+  public final void onFlush() {
+    videoFrameProcessingTaskExecutor.submit(this::flush);
+  }
 
   /**
    * Releases all resources.
    *
    * @see VideoFrameProcessor#release()
    */
-  void release() throws VideoFrameProcessingException;
+  public abstract void release() throws VideoFrameProcessingException;
+
+  /** Clears any pending data. Must be called on the GL thread. */
+  protected void flush() {
+    synchronized (lock) {
+      if (onFlushCompleteTask != null) {
+        videoFrameProcessingTaskExecutor.submitWithHighPriority(onFlushCompleteTask);
+      }
+    }
+  }
 }

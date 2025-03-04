@@ -125,4 +125,43 @@ public final class Mp4ExtractorTest {
     ExtractorAsserts.assertBehavior(
         Mp4Extractor::new, "media/mp4/sample_with_colr_mdcv_and_clli.mp4", simulationConfig);
   }
+
+  /** Test case for supporting original QuickTime specification [Internal: b/297137302]. */
+  @Test
+  public void mp4SampleWithOriginalQuicktimeSpecification() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        Mp4Extractor::new,
+        "media/mp4/sample_with_original_quicktime_specification.mov",
+        simulationConfig);
+  }
+
+  @Test
+  public void mp4SampleWithAv1c() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        Mp4Extractor::new, "media/mp4/sample_with_av1c.mp4", simulationConfig);
+  }
+
+  @Test
+  public void mp4SampleWithMhm1BlCicp1Track() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        Mp4Extractor::new, "media/mp4/sample_mhm1_bl_cicp1.mp4", simulationConfig);
+  }
+
+  @Test
+  public void mp4SampleWithMhm1LcBlCicp1Track() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        Mp4Extractor::new, "media/mp4/sample_mhm1_lcbl_cicp1.mp4", simulationConfig);
+  }
+
+  @Test
+  public void mp4SampleWithMhm1BlConfigChangeTrack() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        Mp4Extractor::new, "media/mp4/sample_mhm1_bl_configchange.mp4", simulationConfig);
+  }
+
+  @Test
+  public void mp4SampleWithMhm1LcBlConfigChangeTrack() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        Mp4Extractor::new, "media/mp4/sample_mhm1_lcbl_configchange.mp4", simulationConfig);
+  }
 }

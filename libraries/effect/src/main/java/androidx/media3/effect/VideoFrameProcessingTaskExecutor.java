@@ -25,7 +25,6 @@ import androidx.media3.common.util.UnstableApi;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -58,8 +57,8 @@ import java.util.concurrent.RejectedExecutionException;
     /**
      * Called when an exception occurs while executing submitted tasks.
      *
-     * <p>Using the {@link VideoFrameProcessingTaskExecutor} after an error happens is undefined
-     * behavior.
+     * <p>If this is called, the calling {@link VideoFrameProcessingTaskExecutor} must immediately
+     * be {@linkplain VideoFrameProcessingTaskExecutor#release} released}.
      */
     void onError(VideoFrameProcessingException exception);
   }
@@ -106,25 +105,6 @@ import java.util.concurrent.RejectedExecutionException;
 
     if (executionException != null) {
       handleException(executionException);
-    }
-  }
-
-  /** Submits the given {@link Task} to execute, and returns after the task is executed. */
-  public void submitAndBlock(Task task) {
-    synchronized (lock) {
-      if (shouldCancelTasks) {
-        return;
-      }
-    }
-
-    Future<?> future = wrapTaskAndSubmitToExecutorService(task, /* isFlushOrReleaseTask= */ false);
-    try {
-      future.get();
-    } catch (ExecutionException e) {
-      handleException(e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      handleException(e);
     }
   }
 
@@ -179,6 +159,9 @@ import java.util.concurrent.RejectedExecutionException;
    *
    * <p>If {@code shouldShutdownExecutorService} is {@code true}, shuts down the {@linkplain
    * ExecutorService background thread}.
+   *
+   * <p>This {@link VideoFrameProcessingTaskExecutor} instance must not be used after this method is
+   * called.
    *
    * @param releaseTask A {@link Task} to execute before shutting down the background thread.
    * @throws InterruptedException If interrupted while releasing resources.

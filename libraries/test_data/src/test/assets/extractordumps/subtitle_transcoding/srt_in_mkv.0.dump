@@ -15,7 +15,7 @@ track 1:
     codecs = avc1.640034
     width = 1080
     height = 720
-    selectionFlags = 1
+    selectionFlags = [default]
     language = und
     initializationData:
       data = length 30, hash F6F3D010
@@ -148,7 +148,7 @@ track 2:
     sampleMimeType = audio/ac3
     channelCount = 1
     sampleRate = 44100
-    selectionFlags = 1
+    selectionFlags = [default]
     language = und
   sample 0:
     time = 62000
@@ -267,17 +267,17 @@ track 2:
     flags = 1
     data = length 418, hash 56AB8D37
 track 3:
-  total output bytes = 993
+  total output bytes = 972
   sample count = 1
   format 0:
     id = 3
     sampleMimeType = application/x-media3-cues
     codecs = application/x-subrip
-    selectionFlags = 1
+    selectionFlags = [default]
     language = en
     label = Subs Label
   sample 0:
     time = 0
     flags = 1
-    data = length 993, hash E926FD1E
+    data = length 972, hash 8E8A2E4B
 tracksEnded = true

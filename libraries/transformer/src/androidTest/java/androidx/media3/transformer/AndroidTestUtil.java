@@ -22,14 +22,14 @@ import static androidx.media3.common.MimeTypes.VIDEO_H265;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkState;
 import static androidx.media3.common.util.Util.SDK_INT;
+import static org.junit.Assume.assumeFalse;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.media.Image;
 import android.media.MediaFormat;
 import android.opengl.EGLContext;
 import android.opengl.EGLDisplay;
-import android.opengl.GLES20;
-import android.opengl.GLUtils;
 import android.os.Build;
 import android.util.Pair;
 import androidx.annotation.Nullable;
@@ -46,6 +46,9 @@ import androidx.media3.common.util.Util;
 import androidx.media3.effect.DefaultGlObjectsProvider;
 import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil;
+import androidx.media3.test.utils.BitmapPixelTestUtil;
+import androidx.media3.test.utils.VideoDecodingWrapper;
+import com.google.common.base.Ascii;
 import com.google.common.collect.ImmutableList;
 import java.io.File;
 import java.io.FileWriter;
@@ -138,6 +141,17 @@ public final class AndroidTestUtil {
           .setHeight(240)
           .setFrameRate(30.472f)
           .setCodecs("avc1.64000D")
+          .build();
+
+  public static final String MP4_ASSET_SEF_H265_URI_STRING =
+      "asset:///media/mp4/sample_sef_slow_motion_hevc.mp4";
+  public static final Format MP4_ASSET_SEF_H265_FORMAT =
+      new Format.Builder()
+          .setSampleMimeType(VIDEO_H265)
+          .setWidth(1920)
+          .setHeight(1080)
+          .setFrameRate(30.01679f)
+          .setCodecs("hvc1.1.6.L120.B0")
           .build();
 
   public static final String MP4_ASSET_BT2020_SDR = "asset:///media/mp4/bt2020-sdr.mp4";
@@ -240,9 +254,8 @@ public final class AndroidTestUtil {
           .setCodecs("avc1.64001F")
           .build();
 
-  public static final String MP4_REMOTE_8K24_URI_STRING =
-      "https://storage.googleapis.com/exoplayer-test-media-1/mp4/8k24fps_4s.mp4";
-  public static final Format MP4_REMOTE_8K24_FORMAT =
+  public static final String MP4_ASSET_8K24_URI_STRING = "asset:///media/mp4/8k24fps_300ms.mp4";
+  public static final Format MP4_ASSET_8K24_FORMAT =
       new Format.Builder()
           .setSampleMimeType(MimeTypes.VIDEO_H265)
           .setWidth(7680)
@@ -550,7 +563,7 @@ public final class AndroidTestUtil {
           .setCodecs("hvc1.1.6.L183.B0")
           .build();
 
-  public static final String MP3_ASSET_URI_STRING = "asset:///media/mp3/test.mp3";
+  public static final String MP3_ASSET_URI_STRING = "asset:///media/mp3/test-cbr-info-header.mp3";
 
   /**
    * Creates the GL objects needed to set up a GL environment including an {@link EGLDisplay} and an
@@ -574,13 +587,7 @@ public final class AndroidTestUtil {
    * <p>Must have a GL context set up.
    */
   public static int generateTextureFromBitmap(Bitmap bitmap) throws GlUtil.GlException {
-    int texId =
-        GlUtil.createTexture(
-            bitmap.getWidth(), bitmap.getHeight(), /* useHighPrecisionColorComponents= */ false);
-    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId);
-    GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, /* level= */ 0, bitmap, /* border= */ 0);
-    GlUtil.checkGlError();
-    return texId;
+    return GlUtil.createTexture(bitmap);
   }
 
   /**
@@ -598,6 +605,27 @@ public final class AndroidTestUtil {
     testJson.put("skipReason", reason);
 
     writeTestSummaryToFile(context, testId, testJson);
+  }
+
+  public static ImmutableList<Bitmap> extractBitmapsFromVideo(Context context, String filePath)
+      throws IOException, InterruptedException {
+    // b/298599172 - runUntilComparisonFrameOrEnded fails on this device because reading decoder
+    //  output as a bitmap doesn't work.
+    assumeFalse(Util.SDK_INT == 21 && Ascii.toLowerCase(Util.MODEL).contains("nexus"));
+    ImmutableList.Builder<Bitmap> bitmaps = new ImmutableList.Builder<>();
+    try (VideoDecodingWrapper decodingWrapper =
+        new VideoDecodingWrapper(
+            context, filePath, /* comparisonInterval= */ 1, /* maxImagesAllowed= */ 1)) {
+      while (true) {
+        @Nullable Image image = decodingWrapper.runUntilComparisonFrameOrEnded();
+        if (image == null) {
+          break;
+        }
+        bitmaps.add(BitmapPixelTestUtil.createGrayscaleArgb8888BitmapFromYuv420888Image(image));
+        image.close();
+      }
+    }
+    return bitmaps.build();
   }
 
   /** A customizable forwarding {@link Codec.EncoderFactory} that forces encoding. */
@@ -784,6 +812,8 @@ public final class AndroidTestUtil {
         return MP4_ASSET_WITH_INCREASING_TIMESTAMPS_320W_240H_15S_FORMAT;
       case MP4_ASSET_SEF_URI_STRING:
         return MP4_ASSET_SEF_FORMAT;
+      case MP4_ASSET_SEF_H265_URI_STRING:
+        return MP4_ASSET_SEF_H265_FORMAT;
       case MP4_ASSET_4K60_PORTRAIT_URI_STRING:
         return MP4_ASSET_4K60_PORTRAIT_FORMAT;
       case MP4_REMOTE_10_SECONDS_URI_STRING:

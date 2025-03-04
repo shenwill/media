@@ -42,6 +42,7 @@ import androidx.media3.common.util.GlUtil;
 import androidx.media3.effect.BitmapOverlay;
 import androidx.media3.effect.DefaultGlObjectsProvider;
 import androidx.media3.effect.DefaultVideoFrameProcessor;
+import androidx.media3.effect.GlTextureProducer;
 import androidx.media3.effect.OverlayEffect;
 import androidx.media3.test.utils.BitmapPixelTestUtil;
 import androidx.media3.test.utils.TextureBitmapReader;
@@ -223,7 +224,6 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     ColorInfo colorInfo = checkNotNull(format.colorInfo);
     videoFrameProcessorTestRunner =
         getSurfaceInputFrameProcessorTestRunnerBuilder(testId)
-            .setInputColorInfo(colorInfo)
             .setOutputColorInfo(colorInfo)
             .setVideoAssetPath(INPUT_HLG10_MP4_ASSET_STRING)
             .build();
@@ -292,7 +292,6 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     ColorInfo colorInfo = checkNotNull(format.colorInfo);
     videoFrameProcessorTestRunner =
         getSurfaceInputFrameProcessorTestRunnerBuilder(testId)
-            .setInputColorInfo(colorInfo)
             .setOutputColorInfo(colorInfo)
             .setVideoAssetPath(INPUT_PQ_MP4_ASSET_STRING)
             .build();
@@ -361,7 +360,6 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     ColorInfo colorInfo = checkNotNull(format.colorInfo);
     videoFrameProcessorTestRunner =
         getSurfaceInputFrameProcessorTestRunnerBuilder(testId)
-            .setInputColorInfo(colorInfo)
             .setOutputColorInfo(colorInfo)
             .setVideoAssetPath(INPUT_HLG10_MP4_ASSET_STRING)
             .setEffects(NO_OP_EFFECT)
@@ -431,7 +429,6 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     ColorInfo colorInfo = checkNotNull(format.colorInfo);
     videoFrameProcessorTestRunner =
         getSurfaceInputFrameProcessorTestRunnerBuilder(testId)
-            .setInputColorInfo(colorInfo)
             .setOutputColorInfo(colorInfo)
             .setVideoAssetPath(INPUT_PQ_MP4_ASSET_STRING)
             .setEffects(NO_OP_EFFECT)
@@ -496,15 +493,15 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     DefaultVideoFrameProcessor.Factory defaultVideoFrameProcessorFactory =
         new DefaultVideoFrameProcessor.Factory.Builder()
             .setTextureOutput(
-                (outputTexture, presentationTimeUs, releaseOutputTextureCallback, syncObject) ->
+                (outputTextureProducer, outputTexture, presentationTimeUs, syncObject) ->
                     inputTextureIntoVideoFrameProcessor(
                         testId,
                         consumersBitmapReader,
                         colorInfo,
                         effects,
                         outputTexture,
+                        outputTextureProducer,
                         presentationTimeUs,
-                        releaseOutputTextureCallback,
                         syncObject),
                 /* textureOutputCapacity= */ 1)
             .build();
@@ -512,7 +509,6 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
         .setTestId(testId)
         .setVideoFrameProcessorFactory(defaultVideoFrameProcessorFactory)
         .setVideoAssetPath(videoAssetPath)
-        .setInputColorInfo(colorInfo)
         .setOutputColorInfo(colorInfo)
         .setBitmapReader(producersBitmapReader)
         .build();
@@ -524,8 +520,8 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
       ColorInfo colorInfo,
       List<Effect> effects,
       GlTextureInfo texture,
+      GlTextureProducer textureProducer,
       long presentationTimeUs,
-      DefaultVideoFrameProcessor.ReleaseOutputTextureCallback releaseOutputTextureCallback,
       long syncObject)
       throws VideoFrameProcessingException, GlUtil.GlException {
     GlObjectsProvider contextSharingGlObjectsProvider =
@@ -533,12 +529,9 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     DefaultVideoFrameProcessor.Factory defaultVideoFrameProcessorFactory =
         new DefaultVideoFrameProcessor.Factory.Builder()
             .setTextureOutput(
-                (outputTexture,
-                    presentationTimeUs1,
-                    releaseOutputTextureCallback1,
-                    unusedSyncObject) -> {
+                (outputTextureProducer, outputTexture, presentationTimeUs1, unusedSyncObject) -> {
                   bitmapReader.readBitmap(outputTexture, presentationTimeUs1);
-                  releaseOutputTextureCallback1.release(presentationTimeUs1);
+                  outputTextureProducer.releaseOutputTexture(presentationTimeUs1);
                 },
                 /* textureOutputCapacity= */ 1)
             .setGlObjectsProvider(contextSharingGlObjectsProvider)
@@ -547,15 +540,19 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
         new VideoFrameProcessorTestRunner.Builder()
             .setTestId(testId)
             .setVideoFrameProcessorFactory(defaultVideoFrameProcessorFactory)
-            .setInputColorInfo(colorInfo)
             .setOutputColorInfo(colorInfo)
             .setBitmapReader(bitmapReader)
             .setEffects(effects)
             .build();
     GlUtil.awaitSyncObject(syncObject);
-    videoFrameProcessorTestRunner.queueInputTexture(texture, presentationTimeUs);
+    try {
+      videoFrameProcessorTestRunner.queueInputTexture(texture, presentationTimeUs, colorInfo);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw VideoFrameProcessingException.from(e);
+    }
     videoFrameProcessorTestRunner.endFrameProcessing(VIDEO_FRAME_PROCESSING_WAIT_MS / 2);
-    releaseOutputTextureCallback.release(presentationTimeUs);
+    textureProducer.releaseOutputTexture(presentationTimeUs);
   }
 
   private VideoFrameProcessorTestRunner.Builder getSurfaceInputFrameProcessorTestRunnerBuilder(
@@ -564,12 +561,9 @@ public final class DefaultVideoFrameProcessorTextureOutputPixelTest {
     DefaultVideoFrameProcessor.Factory defaultVideoFrameProcessorFactory =
         new DefaultVideoFrameProcessor.Factory.Builder()
             .setTextureOutput(
-                (outputTexture,
-                    presentationTimeUs,
-                    releaseOutputTextureCallback,
-                    unusedSyncObject) -> {
+                (outputTextureProducer, outputTexture, presentationTimeUs, unusedSyncObject) -> {
                   textureBitmapReader.readBitmap(outputTexture, presentationTimeUs);
-                  releaseOutputTextureCallback.release(presentationTimeUs);
+                  outputTextureProducer.releaseOutputTexture(presentationTimeUs);
                 },
                 /* textureOutputCapacity= */ 1)
             .build();

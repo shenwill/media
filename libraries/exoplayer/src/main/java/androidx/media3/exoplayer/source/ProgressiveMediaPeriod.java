@@ -751,7 +751,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   private void setSeekMap(SeekMap seekMap) {
     this.seekMap = icyHeaders == null ? seekMap : new Unseekable(/* durationUs= */ C.TIME_UNSET);
-    if (seekMap.getDurationUs() == C.TIME_UNSET && durationUs == C.TIME_UNSET) {
+    if (seekMap.getDurationUs() == C.TIME_UNSET && durationUs != C.TIME_UNSET) {
       this.seekMap =
           new ForwardingSeekMap(this.seekMap) {
             @Override
@@ -1033,6 +1033,9 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
           long position = positionHolder.position;
           dataSpec = buildDataSpec(position);
           long length = dataSource.open(dataSpec);
+          if (loadCanceled) {
+            break;
+          }
           if (length != C.LENGTH_UNSET) {
             length += position;
             onLengthKnown();

@@ -35,6 +35,7 @@ import androidx.media3.common.MimeTypes;
 import androidx.media3.common.OnInputFrameProcessedListener;
 import androidx.media3.common.util.Clock;
 import androidx.media3.common.util.HandlerWrapper;
+import androidx.media3.common.util.TimestampIterator;
 import androidx.media3.decoder.DecoderInputBuffer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -88,10 +89,7 @@ import java.util.concurrent.atomic.AtomicInteger;
   private boolean trackCountReported;
   private boolean decodeAudio;
   private boolean decodeVideo;
-  private long totalDurationUs;
   private int sequenceLoopCount;
-  private boolean audioLoopingEnded;
-  private boolean videoLoopingEnded;
   private int processedInputsSize;
   private boolean released;
 
@@ -353,6 +351,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
     private final SampleConsumer sampleConsumer;
 
+    private long totalDurationUs;
+    private boolean audioLoopingEnded;
+    private boolean videoLoopingEnded;
+
     public SampleConsumerWrapper(SampleConsumer sampleConsumer) {
       this.sampleConsumer = sampleConsumer;
     }
@@ -396,26 +398,33 @@ import java.util.concurrent.atomic.AtomicInteger;
       return true;
     }
 
-    // TODO(b/262693274): Test that concatenate 2 images or an image and a video works as expected
-    //  once ImageAssetLoader implementation is complete.
     @Override
-    public boolean queueInputBitmap(Bitmap inputBitmap, long durationUs, int frameRate) {
-      if (isLooping && totalDurationUs + durationUs > maxSequenceDurationUs) {
-        if (!isMaxSequenceDurationUsFinal) {
-          return false;
-        }
-        durationUs = maxSequenceDurationUs - totalDurationUs;
-        if (durationUs == 0) {
-          if (!videoLoopingEnded) {
+    public @InputResult int queueInputBitmap(
+        Bitmap inputBitmap, TimestampIterator inStreamOffsetsUs) {
+      if (isLooping) {
+        long lastOffsetUs = C.TIME_UNSET;
+        while (inStreamOffsetsUs.hasNext()) {
+          long offsetUs = inStreamOffsetsUs.next();
+          if (totalDurationUs + offsetUs > maxSequenceDurationUs) {
+            if (!isMaxSequenceDurationUsFinal) {
+              return INPUT_RESULT_TRY_AGAIN_LATER;
+            }
+            if (lastOffsetUs == C.TIME_UNSET) {
+              if (!videoLoopingEnded) {
+                videoLoopingEnded = true;
+                signalEndOfVideoInput();
+                return INPUT_RESULT_END_OF_STREAM;
+              }
+              return INPUT_RESULT_TRY_AGAIN_LATER;
+            }
+            inStreamOffsetsUs = new ClippingIterator(inStreamOffsetsUs.copyOf(), lastOffsetUs);
             videoLoopingEnded = true;
-            signalEndOfVideoInput();
+            break;
           }
-          return false;
+          lastOffsetUs = offsetUs;
         }
-        videoLoopingEnded = true;
       }
-
-      return sampleConsumer.queueInputBitmap(inputBitmap, durationUs, frameRate);
+      return sampleConsumer.queueInputBitmap(inputBitmap, inStreamOffsetsUs.copyOf());
     }
 
     @Override
@@ -424,14 +433,15 @@ import java.util.concurrent.atomic.AtomicInteger;
     }
 
     @Override
-    public boolean queueInputTexture(int texId, long presentationTimeUs) {
+    public @InputResult int queueInputTexture(int texId, long presentationTimeUs) {
       long globalTimestampUs = totalDurationUs + presentationTimeUs;
       if (isLooping && globalTimestampUs >= maxSequenceDurationUs) {
         if (isMaxSequenceDurationUsFinal && !videoLoopingEnded) {
           videoLoopingEnded = true;
           signalEndOfVideoInput();
+          return INPUT_RESULT_END_OF_STREAM;
         }
-        return false;
+        return INPUT_RESULT_TRY_AGAIN_LATER;
       }
       return sampleConsumer.queueInputTexture(texId, presentationTimeUs);
     }
@@ -505,6 +515,42 @@ import java.util.concurrent.atomic.AtomicInteger;
                   ExportException.createForAssetLoader(e, ExportException.ERROR_CODE_UNSPECIFIED));
             }
           });
+    }
+  }
+
+  /**
+   * Wraps a {@link TimestampIterator}, providing all the values in the original timestamp iterator
+   * (in the same order) up to and including the first occurrence of the {@code clippingValue}.
+   */
+  private static final class ClippingIterator implements TimestampIterator {
+
+    private final TimestampIterator iterator;
+    private final long clippingValue;
+    private boolean hasReachedClippingValue;
+
+    public ClippingIterator(TimestampIterator iterator, long clippingValue) {
+      this.iterator = iterator;
+      this.clippingValue = clippingValue;
+    }
+
+    @Override
+    public boolean hasNext() {
+      return !hasReachedClippingValue && iterator.hasNext();
+    }
+
+    @Override
+    public long next() {
+      checkState(hasNext());
+      long next = iterator.next();
+      if (clippingValue <= next) {
+        hasReachedClippingValue = true;
+      }
+      return next;
+    }
+
+    @Override
+    public TimestampIterator copyOf() {
+      return new ClippingIterator(iterator.copyOf(), clippingValue);
     }
   }
 }

@@ -1146,6 +1146,7 @@ public final class MediaMetadata implements Bundleable {
     return new Builder(/* mediaMetadata= */ this);
   }
 
+  /** Note: Equality checking does not consider {@link #extras}. */
   @SuppressWarnings("deprecation") // Comparing deprecated fields.
   @Override
   public boolean equals(@Nullable Object obj) {
@@ -1372,11 +1373,20 @@ public final class MediaMetadata implements Bundleable {
     return bundle;
   }
 
-  /** Object that can restore {@link MediaMetadata} from a {@link Bundle}. */
-  @UnstableApi public static final Creator<MediaMetadata> CREATOR = MediaMetadata::fromBundle;
+  /**
+   * Object that can restore {@link MediaMetadata} from a {@link Bundle}.
+   *
+   * @deprecated Use {@link #fromBundle} instead.
+   */
+  @UnstableApi
+  @Deprecated
+  @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
+  public static final Creator<MediaMetadata> CREATOR = MediaMetadata::fromBundle;
 
+  /** Restores a {@code MediaMetadata} from a {@link Bundle}. */
+  @UnstableApi
   @SuppressWarnings("deprecation") // Unbundling deprecated fields.
-  private static MediaMetadata fromBundle(Bundle bundle) {
+  public static MediaMetadata fromBundle(Bundle bundle) {
     Builder builder = new Builder();
     builder
         .setTitle(bundle.getCharSequence(FIELD_TITLE))
@@ -1403,13 +1413,13 @@ public final class MediaMetadata implements Bundleable {
     if (bundle.containsKey(FIELD_USER_RATING)) {
       @Nullable Bundle fieldBundle = bundle.getBundle(FIELD_USER_RATING);
       if (fieldBundle != null) {
-        builder.setUserRating(Rating.CREATOR.fromBundle(fieldBundle));
+        builder.setUserRating(Rating.fromBundle(fieldBundle));
       }
     }
     if (bundle.containsKey(FIELD_OVERALL_RATING)) {
       @Nullable Bundle fieldBundle = bundle.getBundle(FIELD_OVERALL_RATING);
       if (fieldBundle != null) {
-        builder.setOverallRating(Rating.CREATOR.fromBundle(fieldBundle));
+        builder.setOverallRating(Rating.fromBundle(fieldBundle));
       }
     }
     if (bundle.containsKey(FIELD_TRACK_NUMBER)) {

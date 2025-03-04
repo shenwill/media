@@ -15,120 +15,55 @@
  */
 package androidx.media3.extractor.png;
 
-import static androidx.media3.common.util.Assertions.checkNotNull;
-import static androidx.media3.extractor.ImageExtractorUtil.IMAGE_TRACK_ID;
-import static java.lang.annotation.ElementType.TYPE_USE;
-
-import androidx.annotation.IntDef;
-import androidx.media3.common.C;
-import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
-import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.extractor.Extractor;
 import androidx.media3.extractor.ExtractorInput;
 import androidx.media3.extractor.ExtractorOutput;
 import androidx.media3.extractor.PositionHolder;
-import androidx.media3.extractor.SingleSampleSeekMap;
-import androidx.media3.extractor.TrackOutput;
+import androidx.media3.extractor.SingleSampleExtractor;
 import java.io.IOException;
-import java.lang.annotation.Documented;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /** Extracts data from the PNG container format. */
 @UnstableApi
-// TODO: b/289989902 - Move methods of this class into ImageExtractorUtil once there are multiple
-//   image extractors.
 public final class PngExtractor implements Extractor {
 
-  /** Parser states. */
-  @Documented
-  @Retention(RetentionPolicy.SOURCE)
-  @Target(TYPE_USE)
-  @IntDef({STATE_READING_IMAGE, STATE_ENDED})
-  private @interface State {}
-
-  private static final int STATE_READING_IMAGE = 1;
-  private static final int STATE_ENDED = 2;
-
-  private static final int PNG_FILE_SIGNATURE_LENGTH = 2;
   // See PNG (Portable Network Graphics) Specification, Version 1.2, Section 12.12 and Section 3.1.
   private static final int PNG_FILE_SIGNATURE = 0x8950;
-  private static final int FIXED_READ_LENGTH = 1024;
+  private static final int PNG_FILE_SIGNATURE_LENGTH = 2;
 
-  private final ParsableByteArray scratch;
-
-  private @State int state;
-  private @MonotonicNonNull ExtractorOutput extractorOutput;
+  private final SingleSampleExtractor imageExtractor;
 
   /** Creates an instance. */
   public PngExtractor() {
-    scratch = new ParsableByteArray(PNG_FILE_SIGNATURE_LENGTH);
+    imageExtractor =
+        new SingleSampleExtractor(
+            PNG_FILE_SIGNATURE, PNG_FILE_SIGNATURE_LENGTH, MimeTypes.IMAGE_PNG);
   }
 
   @Override
   public boolean sniff(ExtractorInput input) throws IOException {
-    scratch.reset(/* limit= */ PNG_FILE_SIGNATURE_LENGTH);
-    input.peekFully(scratch.getData(), /* offset= */ 0, PNG_FILE_SIGNATURE_LENGTH);
-    return scratch.readUnsignedShort() == PNG_FILE_SIGNATURE;
+    return imageExtractor.sniff(input);
   }
 
   @Override
   public void init(ExtractorOutput output) {
-    extractorOutput = output;
-    outputImageTrackAndSeekMap();
+    imageExtractor.init(output);
   }
 
   @Override
   public @ReadResult int read(ExtractorInput input, PositionHolder seekPosition)
       throws IOException {
-    switch (state) {
-      case STATE_READING_IMAGE:
-        readSegment(input);
-        return RESULT_CONTINUE;
-      case STATE_ENDED:
-        return RESULT_END_OF_INPUT;
-      default:
-        throw new IllegalStateException();
-    }
-  }
-
-  private void readSegment(ExtractorInput input) throws IOException {
-    TrackOutput trackOutput =
-        checkNotNull(extractorOutput).track(IMAGE_TRACK_ID, C.TRACK_TYPE_IMAGE);
-    int result = trackOutput.sampleData(input, FIXED_READ_LENGTH, /* allowEndOfInput= */ true);
-    if (result == C.RESULT_END_OF_INPUT) {
-      state = STATE_ENDED;
-    }
-  }
-
-  private void outputImageTrackAndSeekMap() {
-    ExtractorOutput extractorOutput = checkNotNull(this.extractorOutput);
-    TrackOutput imageTrackOutput = extractorOutput.track(IMAGE_TRACK_ID, C.TRACK_TYPE_IMAGE);
-    imageTrackOutput.format(
-        new Format.Builder()
-            .setContainerMimeType(MimeTypes.IMAGE_PNG)
-            .setTileCountHorizontal(1)
-            .setTileCountVertical(1)
-            .build());
-    extractorOutput.endTracks();
-    extractorOutput.seekMap(new SingleSampleSeekMap(/* durationUs= */ C.TIME_UNSET));
-    state = STATE_READING_IMAGE;
+    return imageExtractor.read(input, seekPosition);
   }
 
   @Override
   public void seek(long position, long timeUs) {
-    if (position == 0) {
-      state = STATE_READING_IMAGE;
-    }
+    imageExtractor.seek(position, timeUs);
   }
 
   @Override
   public void release() {
     // Do nothing.
-
   }
 }

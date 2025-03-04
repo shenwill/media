@@ -22,6 +22,7 @@ import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkState;
 import static androidx.media3.common.util.Assertions.checkStateNotNull;
 import static androidx.media3.decoder.DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT;
+import static androidx.media3.transformer.AudioGraph.isInputAudioFormatValid;
 
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
@@ -41,7 +42,7 @@ import com.google.common.collect.ImmutableList;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -66,26 +67,25 @@ import java.util.concurrent.atomic.AtomicReference;
   private boolean receivedEndOfStreamFromInput;
   private boolean queueEndOfStreamAfterSilence;
 
-  public AudioGraphInput(EditedMediaItem item, Format inputFormat)
+  public AudioGraphInput(
+      AudioFormat requestedOutputAudioFormat, EditedMediaItem editedMediaItem, Format inputFormat)
       throws UnhandledAudioFormatException {
-    checkArgument(inputFormat.pcmEncoding != Format.NO_VALUE);
-    availableInputBuffers = new ConcurrentLinkedDeque<>();
+    AudioFormat inputAudioFormat = new AudioFormat(inputFormat);
+    checkArgument(isInputAudioFormatValid(inputAudioFormat), /* errorMessage= */ inputAudioFormat);
+
+    availableInputBuffers = new ConcurrentLinkedQueue<>();
     ByteBuffer emptyBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder());
     for (int i = 0; i < MAX_INPUT_BUFFER_COUNT; i++) {
       DecoderInputBuffer inputBuffer = new DecoderInputBuffer(BUFFER_REPLACEMENT_MODE_DIRECT);
       inputBuffer.data = emptyBuffer;
       availableInputBuffers.add(inputBuffer);
     }
-    pendingInputBuffers = new ConcurrentLinkedDeque<>();
+    pendingInputBuffers = new ConcurrentLinkedQueue<>();
     pendingMediaItemChange = new AtomicReference<>();
-    AudioFormat inputAudioFormat = new AudioFormat(inputFormat);
     silentAudioGenerator = new SilentAudioGenerator(inputAudioFormat);
     audioProcessingPipeline =
         configureProcessing(
-            /* editedMediaItem= */ item,
-            /* inputFormat= */ inputFormat,
-            /* inputAudioFormat= */ inputAudioFormat,
-            /* requiredOutputAudioFormat= */ AudioFormat.NOT_SET);
+            editedMediaItem, inputFormat, inputAudioFormat, requestedOutputAudioFormat);
     // APP configuration not active until flush called. getOutputAudioFormat based on active config.
     audioProcessingPipeline.flush();
     outputAudioFormat = audioProcessingPipeline.getOutputAudioFormat();
@@ -127,7 +127,8 @@ import java.util.concurrent.atomic.AtomicReference;
           "Could not generate silent audio because duration is unknown.");
     } else {
       checkState(MimeTypes.isAudio(trackFormat.sampleMimeType));
-      checkState(trackFormat.pcmEncoding != Format.NO_VALUE);
+      AudioFormat trackAudioFormat = new AudioFormat(trackFormat);
+      checkState(isInputAudioFormatValid(trackAudioFormat), /* errorMessage= */ trackAudioFormat);
     }
     pendingMediaItemChange.set(
         new MediaItemChange(editedMediaItem, durationUs, trackFormat, isLast));
@@ -150,7 +151,9 @@ import java.util.concurrent.atomic.AtomicReference;
     return true;
   }
 
+  /** Releases any underlying resources. */
   public void release() {
+    // TODO(b/303029174): Impl flush(), reset() & decide if a separate release() is still needed.
     audioProcessingPipeline.reset();
   }
 
@@ -308,9 +311,9 @@ import java.util.concurrent.atomic.AtomicReference;
       // APP is configured in constructor for first media item.
       audioProcessingPipeline =
           configureProcessing(
-              /* editedMediaItem= */ pendingChange.editedMediaItem,
-              /* inputFormat= */ pendingChange.format,
-              /* inputAudioFormat= */ pendingAudioFormat,
+              pendingChange.editedMediaItem,
+              pendingChange.format,
+              pendingAudioFormat,
               /* requiredOutputAudioFormat= */ outputAudioFormat);
     }
     audioProcessingPipeline.flush();
@@ -333,24 +336,25 @@ import java.util.concurrent.atomic.AtomicReference;
           new SpeedChangingAudioProcessor(new SegmentSpeedProvider(inputFormat.metadata)));
     }
     audioProcessors.addAll(editedMediaItem.effects.audioProcessors);
-    // Ensure the output from APP matches what the encoder is configured to receive.
-    if (!requiredOutputAudioFormat.equals(AudioFormat.NOT_SET)) {
+
+    if (requiredOutputAudioFormat.sampleRate != Format.NO_VALUE) {
       SonicAudioProcessor sampleRateChanger = new SonicAudioProcessor();
       sampleRateChanger.setOutputSampleRateHz(requiredOutputAudioFormat.sampleRate);
       audioProcessors.add(sampleRateChanger);
+    }
 
-      // TODO(b/262706549): Handle channel mixing with AudioMixer.
-      if (requiredOutputAudioFormat.channelCount <= 2) {
-        // ChannelMixingMatrix.create only has defaults for mono/stereo input/output.
-        ChannelMixingAudioProcessor channelCountChanger = new ChannelMixingAudioProcessor();
-        channelCountChanger.putChannelMixingMatrix(
-            ChannelMixingMatrix.create(
-                /* inputChannelCount= */ 1, requiredOutputAudioFormat.channelCount));
-        channelCountChanger.putChannelMixingMatrix(
-            ChannelMixingMatrix.create(
-                /* inputChannelCount= */ 2, requiredOutputAudioFormat.channelCount));
-        audioProcessors.add(channelCountChanger);
-      }
+    // TODO(b/262706549): Handle channel mixing with AudioMixer.
+    // ChannelMixingMatrix.create only has defaults for mono/stereo input/output.
+    if (requiredOutputAudioFormat.channelCount == 1
+        || requiredOutputAudioFormat.channelCount == 2) {
+      ChannelMixingAudioProcessor channelCountChanger = new ChannelMixingAudioProcessor();
+      channelCountChanger.putChannelMixingMatrix(
+          ChannelMixingMatrix.create(
+              /* inputChannelCount= */ 1, requiredOutputAudioFormat.channelCount));
+      channelCountChanger.putChannelMixingMatrix(
+          ChannelMixingMatrix.create(
+              /* inputChannelCount= */ 2, requiredOutputAudioFormat.channelCount));
+      audioProcessors.add(channelCountChanger);
     }
 
     AudioProcessingPipeline audioProcessingPipeline =

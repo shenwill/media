@@ -25,6 +25,8 @@ import com.google.common.base.Ascii;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.checkerframework.checker.nullness.qual.PolyNull;
+import org.checkerframework.dataflow.qual.Pure;
 
 /** Defines common MIME types and helper methods. */
 public final class MimeTypes {
@@ -108,7 +110,6 @@ public final class MimeTypes {
 
   public static final String TEXT_VTT = BASE_TYPE_TEXT + "/vtt";
   public static final String TEXT_SSA = BASE_TYPE_TEXT + "/x-ssa";
-
   @UnstableApi public static final String TEXT_UNKNOWN = BASE_TYPE_TEXT + "/x-unknown";
 
   // application/ MIME types
@@ -152,6 +153,11 @@ public final class MimeTypes {
 
   @UnstableApi
   public static final String APPLICATION_MEDIA3_CUES = BASE_TYPE_APPLICATION + "/x-media3-cues";
+
+  /** MIME type for an image URI loaded from an external image management framework. */
+  @UnstableApi
+  public static final String APPLICATION_EXTERNALLY_LOADED_IMAGE =
+      BASE_TYPE_APPLICATION + "/x-image-uri";
 
   // image/ MIME types
 
@@ -215,6 +221,7 @@ public final class MimeTypes {
    * &quot;application&quot; as their base type.
    */
   @UnstableApi
+  @Pure
   public static boolean isText(@Nullable String mimeType) {
     return BASE_TYPE_TEXT.equals(getTopLevelType(mimeType))
         || APPLICATION_MEDIA3_CUES.equals(mimeType)
@@ -234,7 +241,8 @@ public final class MimeTypes {
   /** Returns whether the given string is an image MIME type. */
   @UnstableApi
   public static boolean isImage(@Nullable String mimeType) {
-    return BASE_TYPE_IMAGE.equals(getTopLevelType(mimeType));
+    return BASE_TYPE_IMAGE.equals(getTopLevelType(mimeType))
+        || APPLICATION_EXTERNALLY_LOADED_IMAGE.equals(mimeType);
   }
 
   /**
@@ -631,12 +639,17 @@ public final class MimeTypes {
   /**
    * Normalizes the MIME type provided so that equivalent MIME types are uniquely represented.
    *
-   * @param mimeType A MIME type to normalize.
+   * @param mimeType A MIME type to normalize, or null.
    * @return The normalized MIME type, or the argument MIME type if its normalized form is unknown.
    */
   @UnstableApi
-  public static String normalizeMimeType(String mimeType) {
+  public static @PolyNull String normalizeMimeType(@PolyNull String mimeType) {
+    if (mimeType == null) {
+      return null;
+    }
+    mimeType = Ascii.toLowerCase(mimeType);
     switch (mimeType) {
+        // Normalize uncommon versions of some audio MIME types to their standard equivalent.
       case BASE_TYPE_AUDIO + "/x-ape":
         return AUDIO_APE;
       case BASE_TYPE_AUDIO + "/x-flac":
@@ -645,6 +658,13 @@ public final class MimeTypes {
         return AUDIO_MPEG;
       case BASE_TYPE_AUDIO + "/x-wav":
         return AUDIO_WAV;
+        // Normalize MIME types that are often written with upper-case letters to their common form.
+      case "application/x-mpegurl":
+        return APPLICATION_M3U8;
+      case "audio/mpeg-l1":
+        return AUDIO_MPEG_L1;
+      case "audio/mpeg-l2":
+        return AUDIO_MPEG_L2;
       default:
         return mimeType;
     }

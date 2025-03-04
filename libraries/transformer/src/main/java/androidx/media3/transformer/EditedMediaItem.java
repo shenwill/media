@@ -33,8 +33,7 @@ public final class EditedMediaItem {
   /** A builder for {@link EditedMediaItem} instances. */
   public static final class Builder {
 
-    private final MediaItem mediaItem;
-
+    private MediaItem mediaItem;
     private boolean removeAudio;
     private boolean removeVideo;
     private boolean flattenForSlowMotion;
@@ -55,6 +54,16 @@ public final class EditedMediaItem {
       durationUs = C.TIME_UNSET;
       frameRate = C.RATE_UNSET_INT;
       effects = Effects.EMPTY;
+    }
+
+    private Builder(EditedMediaItem editedMediaItem) {
+      this.mediaItem = editedMediaItem.mediaItem;
+      this.removeAudio = editedMediaItem.removeAudio;
+      this.removeVideo = editedMediaItem.removeVideo;
+      this.flattenForSlowMotion = editedMediaItem.flattenForSlowMotion;
+      this.durationUs = editedMediaItem.durationUs;
+      this.frameRate = editedMediaItem.frameRate;
+      this.effects = editedMediaItem.effects;
     }
 
     /**
@@ -126,13 +135,15 @@ public final class EditedMediaItem {
     /**
      * Sets the duration of the output video in microseconds.
      *
-     * <p>This should be set for inputs that don't have an implicit duration (e.g. images). It will
-     * be ignored for inputs that do have an implicit duration (e.g. video).
+     * <p>For an input that doesn't have an intrinsic duration (e.g. images), this should be the
+     * desired presentation duration. Otherwise, this should be the duration of the full content
+     * that the {@linkplain MediaItem.LocalConfiguration#uri media URI} resolves to, before {@link
+     * MediaItem#clippingConfiguration} is applied.
      *
      * <p>No duration is set by default.
      */
     @CanIgnoreReturnValue
-    public Builder setDurationUs(long durationUs) {
+    public Builder setDurationUs(@IntRange(from = 1) long durationUs) {
       checkArgument(durationUs > 0);
       this.durationUs = durationUs;
       return this;
@@ -182,6 +193,18 @@ public final class EditedMediaItem {
           frameRate,
           effects);
     }
+
+    /**
+     * Sets the {@link MediaItem} on which transformations are applied.
+     *
+     * @param mediaItem The {@link MediaItem}.
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    /* package */ Builder setMediaItem(MediaItem mediaItem) {
+      this.mediaItem = mediaItem;
+      return this;
+    }
   }
 
   /** The {@link MediaItem} on which transformations are applied. */
@@ -212,15 +235,22 @@ public final class EditedMediaItem {
    */
   public final boolean flattenForSlowMotion;
 
-  /** The duration of the image in the output video, in microseconds. */
+  /**
+   * The duration of the image in the output video for image {@link MediaItem}, or the media
+   * duration for other types of {@link MediaItem}, in microseconds.
+   */
+  // TODO - b/309767764: Consider merging with presentationDurationUs.
   public final long durationUs;
 
   /** The frame rate of the image in the output video, in frames per second. */
-  @IntRange(from = 0)
+  @IntRange(from = 1)
   public final int frameRate;
 
   /** The {@link Effects} to apply to the {@link #mediaItem}. */
   public final Effects effects;
+
+  /** The duration for which this {@code EditedMediaItem} should be presented, in microseconds. */
+  private long presentationDurationUs;
 
   private EditedMediaItem(
       MediaItem mediaItem,
@@ -238,5 +268,32 @@ public final class EditedMediaItem {
     this.durationUs = durationUs;
     this.frameRate = frameRate;
     this.effects = effects;
+    presentationDurationUs = C.TIME_UNSET;
+  }
+
+  /** Returns a {@link Builder} initialized with the values of this instance. */
+  /* package */ Builder buildUpon() {
+    return new Builder(this);
+  }
+
+  /* package */ long getPresentationDurationUs() {
+    if (presentationDurationUs == C.TIME_UNSET) {
+      if (mediaItem.clippingConfiguration.equals(MediaItem.ClippingConfiguration.UNSET)
+          || durationUs == C.TIME_UNSET) {
+        // TODO - b/290734981: Use presentationDurationUs for image presentation
+        presentationDurationUs = durationUs;
+      } else {
+        MediaItem.ClippingConfiguration clippingConfiguration = mediaItem.clippingConfiguration;
+        checkArgument(!clippingConfiguration.relativeToDefaultPosition);
+        if (clippingConfiguration.endPositionUs == C.TIME_END_OF_SOURCE) {
+          presentationDurationUs = durationUs - clippingConfiguration.startPositionUs;
+        } else {
+          checkArgument(clippingConfiguration.endPositionUs <= durationUs);
+          presentationDurationUs =
+              clippingConfiguration.endPositionUs - clippingConfiguration.startPositionUs;
+        }
+      }
+    }
+    return presentationDurationUs;
   }
 }

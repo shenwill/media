@@ -78,6 +78,7 @@ public final class ConfigurationActivity extends AppCompatActivity {
   public static final String ENABLE_FALLBACK = "enable_fallback";
   public static final String ENABLE_DEBUG_PREVIEW = "enable_debug_preview";
   public static final String ABORT_SLOW_EXPORT = "abort_slow_export";
+  public static final String PRODUCE_FRAGMENTED_MP4 = "produce_fragmented_mp4";
   public static final String HDR_MODE = "hdr_mode";
   public static final String AUDIO_EFFECTS_SELECTIONS = "audio_effects_selections";
   public static final String VIDEO_EFFECTS_SELECTIONS = "video_effects_selections";
@@ -147,8 +148,8 @@ public final class ConfigurationActivity extends AppCompatActivity {
     "https://storage.googleapis.com/exoplayer-test-media-1/mp4/sample_video_track_only.mp4",
   };
   private static final String[] PRESET_FILE_URI_DESCRIPTIONS = { // same order as PRESET_FILE_URIS
-    "720p H264 video and AAC audio",
-    "1080p H265 video and AAC audio",
+    "720p H264 video and AAC audio (B-frames)",
+    "1080p H265 video and AAC audio (B-frames)",
     "360p H264 video and AAC audio",
     "360p VP8 video and Vorbis audio",
     "4K H264 video and AAC audio (portrait, no B-frames)",
@@ -163,7 +164,7 @@ public final class ConfigurationActivity extends AppCompatActivity {
     "480p DASH (non-square pixels)",
     "HDR (HDR10) H265 limited range video (encoding may fail)",
     "HDR (HLG) H265 limited range video (encoding may fail)",
-    "720p H264 video with no audio",
+    "720p H264 video with no audio (B-frames)",
   };
   private static final String[] AUDIO_EFFECTS = {
     "High pitched",
@@ -230,6 +231,7 @@ public final class ConfigurationActivity extends AppCompatActivity {
   private @MonotonicNonNull CheckBox enableFallbackCheckBox;
   private @MonotonicNonNull CheckBox enableDebugPreviewCheckBox;
   private @MonotonicNonNull CheckBox abortSlowExportCheckBox;
+  private @MonotonicNonNull CheckBox produceFragmentedMp4CheckBox;
   private @MonotonicNonNull Spinner hdrModeSpinner;
   private @MonotonicNonNull Button selectAudioEffectsButton;
   private @MonotonicNonNull Button selectVideoEffectsButton;
@@ -345,6 +347,7 @@ public final class ConfigurationActivity extends AppCompatActivity {
     enableDebugPreviewCheckBox = findViewById(R.id.enable_debug_preview_checkbox);
 
     abortSlowExportCheckBox = findViewById(R.id.abort_slow_export_checkbox);
+    produceFragmentedMp4CheckBox = findViewById(R.id.produce_fragmented_mp4_checkbox);
 
     ArrayAdapter<String> hdrModeAdapter =
         new ArrayAdapter<>(/* context= */ this, R.layout.spinner_item);
@@ -409,6 +412,7 @@ public final class ConfigurationActivity extends AppCompatActivity {
     "enableFallbackCheckBox",
     "enableDebugPreviewCheckBox",
     "abortSlowExportCheckBox",
+    "produceFragmentedMp4CheckBox",
     "hdrModeSpinner",
     "audioEffectsSelections",
     "videoEffectsSelections"
@@ -450,6 +454,7 @@ public final class ConfigurationActivity extends AppCompatActivity {
     bundle.putBoolean(ENABLE_FALLBACK, enableFallbackCheckBox.isChecked());
     bundle.putBoolean(ENABLE_DEBUG_PREVIEW, enableDebugPreviewCheckBox.isChecked());
     bundle.putBoolean(ABORT_SLOW_EXPORT, abortSlowExportCheckBox.isChecked());
+    bundle.putBoolean(PRODUCE_FRAGMENTED_MP4, produceFragmentedMp4CheckBox.isChecked());
     String selectedhdrMode = String.valueOf(hdrModeSpinner.getSelectedItem());
     bundle.putInt(HDR_MODE, checkNotNull(HDR_MODE_DESCRIPTIONS.get(selectedhdrMode)));
     bundle.putBooleanArray(AUDIO_EFFECTS_SELECTIONS, audioEffectsSelections);

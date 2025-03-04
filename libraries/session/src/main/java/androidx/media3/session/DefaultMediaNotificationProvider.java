@@ -23,7 +23,6 @@ import static androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM;
 import static androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS;
 import static androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM;
 import static androidx.media3.common.Player.COMMAND_STOP;
-import static androidx.media3.common.Player.STATE_ENDED;
 import static androidx.media3.common.util.Assertions.checkState;
 import static androidx.media3.common.util.Assertions.checkStateNotNull;
 
@@ -54,6 +53,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
@@ -238,6 +238,13 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
   public static final int DEFAULT_CHANNEL_NAME_RESOURCE_ID =
       R.string.default_notification_channel_name;
 
+  /**
+   * The group key used for the {@link NotificationCompat.Builder#setGroup(String)} to avoid the
+   * media notification being auto-grouped with the other notifications. The other notifications
+   * sent from the app shouldn't use this group key.
+   */
+  public static final String GROUP_KEY = "media3_group_key";
+
   private static final String TAG = "NotificationProvider";
 
   private final Context context;
@@ -320,8 +327,8 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
                 mediaSession,
                 player.getAvailableCommands(),
                 customLayoutWithEnabledCommandButtonsOnly.build(),
-                /* showPauseButton= */ player.getPlayWhenReady()
-                    && player.getPlaybackState() != STATE_ENDED),
+                !Util.shouldShowPlayButton(
+                    player, mediaSession.getShowPlayButtonIfPlaybackIsSuppressed())),
             builder,
             actionFactory);
     mediaStyle.setShowActionsInCompactView(compactViewIndices);
@@ -342,7 +349,7 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
         if (bitmapFuture.isDone()) {
           try {
             builder.setLargeIcon(Futures.getDone(bitmapFuture));
-          } catch (ExecutionException e) {
+          } catch (CancellationException | ExecutionException e) {
             Log.w(TAG, getBitmapLoadErrorMessage(e));
           }
         } else {
@@ -368,9 +375,13 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
     long playbackStartTimeMs = getPlaybackStartTimeEpochMs(player);
     boolean displayElapsedTimeWithChronometer = playbackStartTimeMs != C.TIME_UNSET;
     builder
-        .setWhen(playbackStartTimeMs)
+        .setWhen(displayElapsedTimeWithChronometer ? playbackStartTimeMs : 0L)
         .setShowWhen(displayElapsedTimeWithChronometer)
         .setUsesChronometer(displayElapsedTimeWithChronometer);
+
+    if (Util.SDK_INT >= 31) {
+      Api31.setForegroundServiceBehavior(builder);
+    }
 
     Notification notification =
         builder
@@ -382,6 +393,7 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
             .setStyle(mediaStyle)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(false)
+            .setGroup(GROUP_KEY)
             .build();
     return new MediaNotification(notificationId, notification);
   }
@@ -690,6 +702,14 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
         channel.setShowBadge(false);
       }
       notificationManager.createNotificationChannel(channel);
+    }
+  }
+
+  @RequiresApi(31)
+  private static class Api31 {
+    @DoNotInline
+    public static void setForegroundServiceBehavior(NotificationCompat.Builder builder) {
+      builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
     }
   }
 

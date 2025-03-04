@@ -24,27 +24,26 @@ import static androidx.media3.transformer.TestUtil.FILE_AUDIO_VIDEO;
 import static androidx.media3.transformer.TestUtil.FILE_AUDIO_VIDEO_INCREASING_TIMESTAMPS_15S;
 import static androidx.media3.transformer.TestUtil.addAudioDecoders;
 import static androidx.media3.transformer.TestUtil.addAudioEncoders;
+import static androidx.media3.transformer.TestUtil.createAudioEffects;
 import static androidx.media3.transformer.TestUtil.createPitchChangingAudioProcessor;
 import static androidx.media3.transformer.TestUtil.createTransformerBuilder;
 import static androidx.media3.transformer.TestUtil.getDumpFileName;
 import static androidx.media3.transformer.TestUtil.removeEncodersAndDecoders;
+import static com.google.common.truth.Truth.assertThat;
 
 import android.content.Context;
-import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
-import androidx.media3.common.audio.SonicAudioProcessor;
-import androidx.media3.common.util.Util;
 import androidx.media3.effect.RgbFilter;
 import androidx.media3.test.utils.DumpFileAsserts;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.common.collect.ImmutableList;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 
 /**
@@ -60,23 +59,19 @@ import org.junit.runner.RunWith;
  */
 @RunWith(AndroidJUnit4.class)
 public final class SequenceExportTest {
+  @Rule public final TemporaryFolder outputDir = new TemporaryFolder();
 
-  private Context context;
-  private String outputPath;
-  private CapturingMuxer.Factory muxerFactory;
+  private final Context context = ApplicationProvider.getApplicationContext();
+  private final CapturingMuxer.Factory muxerFactory = new CapturingMuxer.Factory();
 
   @Before
-  public void setUp() throws Exception {
-    context = ApplicationProvider.getApplicationContext();
-    outputPath = Util.createTempFile(context, "TransformerTest").getPath();
-    muxerFactory = new CapturingMuxer.Factory();
+  public void setUp() {
     addAudioDecoders(MimeTypes.AUDIO_RAW);
     addAudioEncoders(MimeTypes.AUDIO_AAC);
   }
 
   @After
-  public void tearDown() throws Exception {
-    Files.delete(Paths.get(outputPath));
+  public void tearDown() {
     removeEncodersAndDecoders();
   }
 
@@ -86,21 +81,23 @@ public final class SequenceExportTest {
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem mediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO);
     EditedMediaItem editedMediaItem = new EditedMediaItem.Builder(mediaItem).build();
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem, editedMediaItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem, editedMediaItem))
             .setTransmuxAudio(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_VIDEO + ".concatenated_transmux"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO,
+            /* modifications...= */ "original",
+            "original",
+            "transmux"));
   }
 
   @Test
@@ -109,27 +106,30 @@ public final class SequenceExportTest {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem mediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO);
-    SonicAudioProcessor sonicAudioProcessor = createPitchChangingAudioProcessor(/* pitch= */ 2f);
-    Effect videoEffect = RgbFilter.createGrayscaleFilter();
-    Effects effects =
-        new Effects(ImmutableList.of(sonicAudioProcessor), ImmutableList.of(videoEffect));
     EditedMediaItem editedMediaItem =
-        new EditedMediaItem.Builder(mediaItem).setEffects(effects).build();
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem, editedMediaItem));
+        new EditedMediaItem.Builder(mediaItem)
+            .setEffects(
+                new Effects(
+                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
+                    ImmutableList.of(RgbFilter.createGrayscaleFilter())))
+            .build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem, editedMediaItem))
             .setTransmuxAudio(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_VIDEO + ".concatenated_transmux"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO,
+            /* modifications...= */ "original",
+            "original",
+            "transmux"));
   }
 
   @Test
@@ -159,22 +159,73 @@ public final class SequenceExportTest {
             .setClippingConfiguration(clippingConfiguration2)
             .build();
     EditedMediaItem editedMediaItem2 = new EditedMediaItem.Builder(mediaItem2).build();
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem1, editedMediaItem2));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem1, editedMediaItem2))
             .setTransmuxAudio(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
         getDumpFileName(
-            FILE_AUDIO_VIDEO_INCREASING_TIMESTAMPS_15S + ".clipped_concatenated_transmux"));
+            /* originalFileName= */ FILE_AUDIO_VIDEO_INCREASING_TIMESTAMPS_15S,
+            /* modifications...= */ "clipped",
+            "clipped",
+            "transmux"));
+  }
+
+  @Test
+  public void
+      start_trimOptimizationEnabled_concatenateClippedMediaItemsWithTransmux_completesSuccessfully()
+          throws Exception {
+    Transformer transformer =
+        createTransformerBuilder(muxerFactory, /* enableFallback= */ false)
+            .experimentalSetTrimOptimizationEnabled(true)
+            .build();
+    MediaItem.ClippingConfiguration clippingConfiguration1 =
+        new MediaItem.ClippingConfiguration.Builder()
+            .setStartPositionMs(0) // Corresponds to key frame.
+            .setEndPositionMs(500)
+            .build();
+    MediaItem mediaItem1 =
+        new MediaItem.Builder()
+            .setUri(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO_INCREASING_TIMESTAMPS_15S)
+            .setClippingConfiguration(clippingConfiguration1)
+            .build();
+    EditedMediaItem editedMediaItem1 = new EditedMediaItem.Builder(mediaItem1).build();
+    MediaItem.ClippingConfiguration clippingConfiguration2 =
+        new MediaItem.ClippingConfiguration.Builder()
+            .setStartPositionMs(12_500) // Corresponds to key frame.
+            .setEndPositionMs(14_000)
+            .build();
+    MediaItem mediaItem2 =
+        new MediaItem.Builder()
+            .setUri(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO_INCREASING_TIMESTAMPS_15S)
+            .setClippingConfiguration(clippingConfiguration2)
+            .build();
+    EditedMediaItem editedMediaItem2 = new EditedMediaItem.Builder(mediaItem2).build();
+    Composition composition =
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem1, editedMediaItem2))
+            .setTransmuxAudio(true)
+            .setTransmuxVideo(true)
+            .build();
+
+    transformer.start(composition, outputDir.newFile().getPath());
+    ExportResult exportResult = TransformerTestRunner.runLooper(transformer);
+
+    assertThat(exportResult.optimizationResult).isEqualTo(ExportResult.OPTIMIZATION_NONE);
+    DumpFileAsserts.assertOutput(
+        context,
+        muxerFactory.getCreatedMuxer(),
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO_INCREASING_TIMESTAMPS_15S,
+            /* modifications...= */ "clipped",
+            "clipped",
+            "transmux"));
   }
 
   @Test
@@ -186,21 +237,23 @@ public final class SequenceExportTest {
     EditedMediaItem audioVideoMediaItem = new EditedMediaItem.Builder(mediaItem).build();
     EditedMediaItem videoOnlyMediaItem =
         new EditedMediaItem.Builder(mediaItem).setRemoveAudio(true).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(audioVideoMediaItem, videoOnlyMediaItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(
+                new EditedMediaItemSequence(audioVideoMediaItem, videoOnlyMediaItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".audio_then_silence"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "original",
+            "silence"));
   }
 
   @Test
@@ -212,21 +265,23 @@ public final class SequenceExportTest {
     EditedMediaItem videoOnlyMediaItem =
         new EditedMediaItem.Builder(mediaItem).setRemoveAudio(true).build();
     EditedMediaItem audioVideoMediaItem = new EditedMediaItem.Builder(mediaItem).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(videoOnlyMediaItem, audioVideoMediaItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(
+                new EditedMediaItemSequence(videoOnlyMediaItem, audioVideoMediaItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".silence_then_audio"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "silence",
+            "original"));
   }
 
   @Test
@@ -237,34 +292,30 @@ public final class SequenceExportTest {
     MediaItem mediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_VIDEO);
     EditedMediaItem audioEditedMediaItem =
         new EditedMediaItem.Builder(mediaItem)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     EditedMediaItem noAudioEditedMediaItem =
         new EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(audioEditedMediaItem, noAudioEditedMediaItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(
+                new EditedMediaItemSequence(audioEditedMediaItem, noAudioEditedMediaItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".audio_then_silence_with_effects"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "highPitch",
+            "silenceHighPitch"));
   }
 
   @Test
@@ -273,37 +324,32 @@ public final class SequenceExportTest {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem mediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_VIDEO);
-    EditedMediaItem noAudioEditedMediaItem =
+    EditedMediaItem silenceEditedMediaItem =
         new EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     EditedMediaItem audioEditedMediaItem =
         new EditedMediaItem.Builder(mediaItem)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     Composition composition =
         new Composition.Builder(
-                ImmutableList.of(
-                    new EditedMediaItemSequence(
-                        ImmutableList.of(noAudioEditedMediaItem, audioEditedMediaItem))))
+                new EditedMediaItemSequence(silenceEditedMediaItem, audioEditedMediaItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".silence_then_audio_with_effects"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "silenceHighPitch",
+            "highPitch"));
   }
 
   @Test
@@ -314,21 +360,22 @@ public final class SequenceExportTest {
     MediaItem mediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_VIDEO);
     EditedMediaItem videoOnlyMediaItem =
         new EditedMediaItem.Builder(mediaItem).setRemoveAudio(true).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(videoOnlyMediaItem, videoOnlyMediaItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(videoOnlyMediaItem, videoOnlyMediaItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".silence_then_silence"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "silence",
+            "silence"));
   }
 
   @Test
@@ -340,34 +387,26 @@ public final class SequenceExportTest {
     EditedMediaItem silenceWithEffectsItem =
         new EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     EditedMediaItem silenceItem =
-        new EditedMediaItem.Builder(mediaItem)
-            .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
-            .build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(silenceWithEffectsItem, silenceItem));
+        new EditedMediaItem.Builder(mediaItem).setRemoveAudio(true).build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(silenceWithEffectsItem, silenceItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".silence-effects_then_silence"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "silenceHighPitch",
+            "silence"));
   }
 
   @Test
@@ -376,37 +415,29 @@ public final class SequenceExportTest {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem mediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_VIDEO);
+    EditedMediaItem silenceItem =
+        new EditedMediaItem.Builder(mediaItem).setRemoveAudio(true).build();
     EditedMediaItem silenceWithEffectsItem =
         new EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
-    EditedMediaItem silenceItem =
-        new EditedMediaItem.Builder(mediaItem)
-            .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
-            .build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(silenceItem, silenceWithEffectsItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(silenceItem, silenceWithEffectsItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".silence_then_silence-effects"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "silence",
+            "silenceHighPitch"));
   }
 
   @Test
@@ -418,34 +449,29 @@ public final class SequenceExportTest {
     EditedMediaItem firstItem =
         new EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     EditedMediaItem secondItem =
         new EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(true)
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(firstItem, secondItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(firstItem, secondItem))
             .experimentalSetForceAudioTrack(true)
             .setTransmuxVideo(true)
             .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_VIDEO + ".silence_then_silence_with_effects"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_VIDEO,
+            /* modifications...= */ "silenceHighPitch",
+            "silenceHighPitch"));
   }
 
   @Test
@@ -454,16 +480,20 @@ public final class SequenceExportTest {
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem audioOnlyMediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW);
     EditedMediaItem editedMediaItem = new EditedMediaItem.Builder(audioOnlyMediaItem).build();
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem, editedMediaItem));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence)).build();
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem, editedMediaItem))
+            .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
-        context, muxerFactory.getCreatedMuxer(), getDumpFileName(FILE_AUDIO_RAW + ".concatenated"));
+        context,
+        muxerFactory.getCreatedMuxer(),
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW, /* modifications...= */
+            "original",
+            "original"));
   }
 
   @Test
@@ -472,23 +502,24 @@ public final class SequenceExportTest {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem audioOnlyMediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW);
-    SonicAudioProcessor sonicAudioProcessor = createPitchChangingAudioProcessor(/* pitch= */ 2f);
-    Effects effects =
-        new Effects(ImmutableList.of(sonicAudioProcessor), /* videoEffects= */ ImmutableList.of());
     EditedMediaItem editedMediaItem =
-        new EditedMediaItem.Builder(audioOnlyMediaItem).setEffects(effects).build();
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem, editedMediaItem));
+        new EditedMediaItem.Builder(audioOnlyMediaItem)
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
+            .build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence)).build();
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem, editedMediaItem))
+            .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW + ".concatenated_high_pitch"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW,
+            /* modifications...= */ "highPitch",
+            "highPitch"));
   }
 
   @Test
@@ -497,35 +528,30 @@ public final class SequenceExportTest {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
     MediaItem audioOnlyMediaItem = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW);
-    Effects highPitchEffects =
-        new Effects(
-            ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-            /* videoEffects= */ ImmutableList.of());
     EditedMediaItem highPitchMediaItem =
         new EditedMediaItem.Builder(audioOnlyMediaItem)
             .setRemoveVideo(true)
-            .setEffects(highPitchEffects)
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
-    Effects lowPitchEffects =
-        new Effects(
-            ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 0.5f)),
-            /* videoEffects= */ ImmutableList.of());
     EditedMediaItem lowPitchMediaItem =
         new EditedMediaItem.Builder(audioOnlyMediaItem)
             .setRemoveVideo(true)
-            .setEffects(lowPitchEffects)
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 0.5f)))
             .build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(highPitchMediaItem, lowPitchMediaItem));
-    Composition composition = new Composition.Builder(ImmutableList.of(sequence)).build();
+    Composition composition =
+        new Composition.Builder(new EditedMediaItemSequence(highPitchMediaItem, lowPitchMediaItem))
+            .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW + ".high_pitch_then_low_pitch"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW,
+            /* modifications...= */ "highPitch",
+            "lowPitch"));
   }
 
   @Test
@@ -535,21 +561,23 @@ public final class SequenceExportTest {
     MediaItem stereo48000Audio =
         MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_STEREO_48000KHZ);
     MediaItem mono44100Audio = MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW);
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(
-            ImmutableList.of(
-                new EditedMediaItem.Builder(stereo48000Audio).build(),
-                new EditedMediaItem.Builder(mono44100Audio).build()));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence)).build();
+        new Composition.Builder(
+                new EditedMediaItemSequence(
+                    new EditedMediaItem.Builder(stereo48000Audio).build(),
+                    new EditedMediaItem.Builder(mono44100Audio).build()))
+            .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_STEREO_48000KHZ + "_then_sample.wav"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_STEREO_48000KHZ,
+            /* modifications...= */ "original",
+            "sample.wav"));
   }
 
   @Test
@@ -558,33 +586,29 @@ public final class SequenceExportTest {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
 
-    Effects highPitch =
-        new Effects(
-            ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-            /* videoEffects= */ ImmutableList.of());
-
     EditedMediaItem stereo48000Audio =
         new EditedMediaItem.Builder(
                 MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_STEREO_48000KHZ))
-            .setEffects(highPitch)
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     EditedMediaItem mono44100Audio =
         new EditedMediaItem.Builder(MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW))
-            .setEffects(highPitch)
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
+            .build();
+    Composition composition =
+        new Composition.Builder(new EditedMediaItemSequence(stereo48000Audio, mono44100Audio))
             .build();
 
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(ImmutableList.of(stereo48000Audio, mono44100Audio));
-    Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence)).build();
-
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_STEREO_48000KHZ + "-high_pitch_then_sample.wav-high_pitch"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_STEREO_48000KHZ,
+            /* modifications...= */ "highPitch",
+            "sample.wavHighPitch"));
   }
 
   @Test
@@ -596,30 +620,26 @@ public final class SequenceExportTest {
     EditedMediaItem stereo48000AudioHighPitch =
         new EditedMediaItem.Builder(
                 MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW_STEREO_48000KHZ))
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 2f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 2f)))
             .build();
     EditedMediaItem mono44100AudioLowPitch =
         new EditedMediaItem.Builder(MediaItem.fromUri(ASSET_URI_PREFIX + FILE_AUDIO_RAW))
-            .setEffects(
-                new Effects(
-                    ImmutableList.of(createPitchChangingAudioProcessor(/* pitch= */ 0.5f)),
-                    /* videoEffects= */ ImmutableList.of()))
+            .setEffects(createAudioEffects(createPitchChangingAudioProcessor(/* pitch= */ 0.5f)))
             .build();
-    EditedMediaItemSequence editedMediaItemSequence =
-        new EditedMediaItemSequence(
-            ImmutableList.of(stereo48000AudioHighPitch, mono44100AudioLowPitch));
     Composition composition =
-        new Composition.Builder(ImmutableList.of(editedMediaItemSequence)).build();
+        new Composition.Builder(
+                new EditedMediaItemSequence(stereo48000AudioHighPitch, mono44100AudioLowPitch))
+            .build();
 
-    transformer.start(composition, outputPath);
+    transformer.start(composition, outputDir.newFile().getPath());
     TransformerTestRunner.runLooper(transformer);
 
     DumpFileAsserts.assertOutput(
         context,
         muxerFactory.getCreatedMuxer(),
-        getDumpFileName(FILE_AUDIO_RAW_STEREO_48000KHZ + "-high_pitch_then_sample.wav-low_pitch"));
+        getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_RAW_STEREO_48000KHZ,
+            /* modifications...= */ "highPitch",
+            "sample.wavLowPitch"));
   }
 }

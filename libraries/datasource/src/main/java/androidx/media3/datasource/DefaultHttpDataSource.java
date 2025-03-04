@@ -304,7 +304,7 @@ public class DefaultHttpDataSource extends BaseDataSource implements HttpDataSou
         /* keepPostFor302Redirects= */ false);
   }
 
-  private DefaultHttpDataSource(
+  protected DefaultHttpDataSource(
       @Nullable String userAgent,
       int connectTimeoutMillis,
       int readTimeoutMillis,

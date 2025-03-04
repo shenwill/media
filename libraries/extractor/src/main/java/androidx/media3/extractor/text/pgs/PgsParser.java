@@ -21,8 +21,11 @@ import android.graphics.Bitmap;
 
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
+import androidx.media3.common.Format.CueReplacementBehavior;
 import androidx.media3.common.text.Cue;
 import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.Consumer;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
@@ -43,6 +46,13 @@ import java.util.zip.Inflater;
 @UnstableApi
 public final class PgsParser implements SubtitleParser {
 
+  /**
+   * The {@link CueReplacementBehavior} for consecutive {@link CuesWithTiming} emitted by this
+   * implementation.
+   */
+  public static final @CueReplacementBehavior int CUE_REPLACEMENT_BEHAVIOR =
+      Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE;
+
   private static final int SECTION_TYPE_PALETTE = 0x14;
   private static final int SECTION_TYPE_BITMAP_PICTURE = 0x15;
   private static final int SECTION_TYPE_IDENTIFIER = 0x16;
@@ -57,8 +67,7 @@ public final class PgsParser implements SubtitleParser {
   private final ParsableByteArray buffer;
   private final ParsableByteArray inflatedBuffer;
   private final CueBuilder cueBuilder;
-  @Nullable
-  private Inflater inflater;
+  @Nullable private Inflater inflater;
 
   public PgsParser() {
     buffer = new ParsableByteArray();
@@ -67,13 +76,26 @@ public final class PgsParser implements SubtitleParser {
   }
 
   @Override
+  public @CueReplacementBehavior int getCueReplacementBehavior() {
+    return CUE_REPLACEMENT_BEHAVIOR;
+  }
+
   public void reset() {
   }
 
   @Override
-  public ImmutableList<CuesWithTiming> parse(byte[] data, int offset, int length) {
+  public void parse(
+      byte[] data,
+      int offset,
+      int length,
+      OutputOptions outputOptions,
+      Consumer<CuesWithTiming> output) {
     if (data[offset] == 0x50 && data[offset + 1] == 0x47) {
-      return processFileData(data, offset, length);
+      ImmutableList<CuesWithTiming> cues = processFileData(data, offset, length);
+      for (CuesWithTiming cue : cues) {
+        output.accept(cue);
+      }
+      return;
     }
     buffer.reset(data, /* limit= */ offset + length);
     buffer.setPosition(offset);
@@ -86,7 +108,7 @@ public final class PgsParser implements SubtitleParser {
         cues.add(cue);
       }
     }
-    return ImmutableList.of(
+    output.accept(
         new CuesWithTiming(cues, /* startTimeUs= */ C.TIME_UNSET, /* durationUs= */ C.TIME_UNSET));
   }
 

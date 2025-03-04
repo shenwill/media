@@ -56,6 +56,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.analytics.DefaultAnalyticsCollector;
 import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer;
+import androidx.media3.exoplayer.image.ImageOutput;
 import androidx.media3.exoplayer.metadata.MetadataRenderer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.source.MediaSource;
@@ -173,7 +174,7 @@ public interface ExoPlayer extends Player {
   interface AudioComponent {
 
     /**
-     * @deprecated Use {@link ExoPlayer#setAudioAttributes(AudioAttributes, boolean)} instead.
+     * @deprecated Use {@link Player#setAudioAttributes(AudioAttributes, boolean)} instead.
      */
     @Deprecated
     void setAudioAttributes(AudioAttributes audioAttributes, boolean handleAudioFocus);
@@ -421,37 +422,24 @@ public interface ExoPlayer extends Player {
     void setDeviceMuted(boolean muted);
   }
 
-  /**
-   * A listener for audio offload events.
-   *
-   * <p>This class is experimental, and might be renamed, moved or removed in a future release.
-   */
+  /** A listener for audio offload events. */
   @UnstableApi
   interface AudioOffloadListener {
     /**
-     * Called when the player has started or stopped offload scheduling using {@link
-     * #experimentalSetOffloadSchedulingEnabled(boolean)}.
+     * Called when the value of {@link #isSleepingForOffload} changes.
      *
-     * <p>This method is experimental, and will be renamed or removed in a future release.
+     * <p>When {@code isSleepingForOffload} is {@code true} then, the player has paused its main
+     * loop to save power in offload scheduling mode.
      */
-    default void onExperimentalOffloadSchedulingEnabledChanged(boolean offloadSchedulingEnabled) {}
-
-    /**
-     * Called when the player has started or finished sleeping for offload.
-     *
-     * <p>This method is experimental, and will be renamed or removed in a future release.
-     */
-    default void onExperimentalSleepingForOffloadChanged(boolean sleepingForOffload) {}
+    default void onSleepingForOffloadChanged(boolean isSleepingForOffload) {}
 
     /**
      * Called when the value of {@link AudioTrack#isOffloadedPlayback} changes.
      *
      * <p>This should not be generally required to be acted upon. But when offload is critical for
      * efficiency, or audio features (gapless, playback speed), this will let the app know.
-     *
-     * <p>This method is experimental, and will be renamed or removed in a future release.
      */
-    default void onExperimentalOffloadedPlayback(boolean offloadedPlayback) {}
+    default void onOffloadedPlayback(boolean isOffloadedPlayback) {}
   }
 
   /**
@@ -1423,9 +1411,9 @@ public interface ExoPlayer extends Player {
    * @param startMediaItemIndex The media item index to start playback from. If {@link
    *     C#INDEX_UNSET} is passed, the current position is not reset.
    * @param startPositionMs The position in milliseconds to start playback from. If {@link
-   *     C#TIME_UNSET} is passed, the default position of the given media item is used. In any case,
-   *     if {@code startMediaItemIndex} is set to {@link C#INDEX_UNSET}, this parameter is ignored
-   *     and the position is not reset at all.
+   *     C#TIME_UNSET} is passed, the default position of the given media source is used. In any
+   *     case, if {@code startMediaItemIndex} is set to {@link C#INDEX_UNSET}, this parameter is
+   *     ignored and the position is not reset at all.
    */
   @UnstableApi
   void setMediaSources(
@@ -1444,7 +1432,8 @@ public interface ExoPlayer extends Player {
    * Clears the playlist and adds the specified {@link MediaSource}.
    *
    * @param mediaSource The new {@link MediaSource}.
-   * @param startPositionMs The position in milliseconds to start playback from.
+   * @param startPositionMs The position in milliseconds to start playback from. If {@link
+   *     C#TIME_UNSET} is passed, the default position of the given media source is used.
    */
   @UnstableApi
   void setMediaSource(MediaSource mediaSource, long startPositionMs);
@@ -1525,29 +1514,6 @@ public interface ExoPlayer extends Player {
    */
   @Override
   void replaceMediaItems(int fromIndex, int toIndex, List<MediaItem> mediaItems);
-
-  /**
-   * Sets the attributes for audio playback, used by the underlying audio track. If not set, the
-   * default audio attributes will be used. They are suitable for general media playback.
-   *
-   * <p>Setting the audio attributes during playback may introduce a short gap in audio output as
-   * the audio track is recreated. A new audio session id will also be generated.
-   *
-   * <p>If tunneling is enabled by the track selector, the specified audio attributes will be
-   * ignored, but they will take effect if audio is later played without tunneling.
-   *
-   * <p>If the device is running a build before platform API version 21, audio attributes cannot be
-   * set directly on the underlying audio track. In this case, the usage will be mapped onto an
-   * equivalent stream type using {@link Util#getStreamTypeForAudioUsage(int)}.
-   *
-   * <p>If audio focus should be handled, the {@link AudioAttributes#usage} must be {@link
-   * C#USAGE_MEDIA} or {@link C#USAGE_GAME}. Other usages will throw an {@link
-   * IllegalArgumentException}.
-   *
-   * @param audioAttributes The attributes to use for audio playback.
-   * @param handleAudioFocus True if the player should handle audio focus, false otherwise.
-   */
-  void setAudioAttributes(AudioAttributes audioAttributes, boolean handleAudioFocus);
 
   /**
    * Sets the ID of the audio session to attach to the underlying {@link android.media.AudioTrack}.
@@ -1826,51 +1792,26 @@ public interface ExoPlayer extends Player {
   void setPriorityTaskManager(@Nullable PriorityTaskManager priorityTaskManager);
 
   /**
-   * Sets whether audio offload scheduling is enabled. If enabled, ExoPlayer's main loop will run as
-   * rarely as possible when playing an audio stream using audio offload.
+   * Returns whether the player has paused its main loop to save power in offload scheduling mode.
    *
-   * <p>Only use this scheduling mode if the player is not displaying anything to the user. For
-   * example when the application is in the background, or the screen is off. The player state
-   * (including position) is rarely updated (roughly between every 10 seconds and 1 minute).
+   * <p>Offload scheduling mode should save significant power when the phone is playing offload
+   * audio with the screen off.
    *
-   * <p>While offload scheduling is enabled, player events may be delivered severely delayed and
-   * apps should not interact with the player. When returning to the foreground, disable offload
-   * scheduling and wait for {@link
-   * AudioOffloadListener#onExperimentalOffloadSchedulingEnabledChanged(boolean)} to be called with
-   * {@code offloadSchedulingEnabled = false} before interacting with the player.
-   *
-   * <p>This mode should save significant power when the phone is playing offload audio with the
-   * screen off.
-   *
-   * <p>This mode only has an effect when playing an audio track in offload mode, which requires all
-   * the following:
+   * <p>Offload scheduling is only enabled when playing an audio track in offload mode, which
+   * requires all the following:
    *
    * <ul>
    *   <li>Audio offload rendering is enabled through {@link
-   *       TrackSelectionParameters.Builder#setAudioOffloadPreference}.
+   *       TrackSelectionParameters.Builder#setAudioOffloadPreferences}.
    *   <li>An audio track is playing in a format that the device supports offloading (for example,
    *       MP3 or AAC).
    *   <li>The {@link AudioSink} is playing with an offload {@link AudioTrack}.
    * </ul>
    *
-   * <p>The state where ExoPlayer main loop has been paused to save power during offload playback
-   * can be queried with {@link #experimentalIsSleepingForOffload()}.
-   *
-   * <p>This method is experimental, and will be renamed or removed in a future release.
-   *
-   * @param offloadSchedulingEnabled Whether to enable offload scheduling.
+   * @see AudioOffloadListener#onSleepingForOffloadChanged(boolean)
    */
   @UnstableApi
-  void experimentalSetOffloadSchedulingEnabled(boolean offloadSchedulingEnabled);
-
-  /**
-   * Returns whether the player has paused its main loop to save power in offload scheduling mode.
-   *
-   * @see #experimentalSetOffloadSchedulingEnabled(boolean)
-   * @see AudioOffloadListener#onExperimentalSleepingForOffloadChanged(boolean)
-   */
-  @UnstableApi
-  boolean experimentalIsSleepingForOffload();
+  boolean isSleepingForOffload();
 
   /**
    * Returns whether <a
@@ -1881,4 +1822,12 @@ public interface ExoPlayer extends Player {
    */
   @UnstableApi
   boolean isTunnelingEnabled();
+
+  /**
+   * Sets the {@link ImageOutput} where rendered images will be forwarded.
+   *
+   * @param imageOutput The {@link ImageOutput}.
+   */
+  @UnstableApi
+  void setImageOutput(ImageOutput imageOutput);
 }

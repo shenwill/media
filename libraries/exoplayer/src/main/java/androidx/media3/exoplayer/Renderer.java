@@ -27,11 +27,15 @@ import androidx.media3.common.C;
 import androidx.media3.common.Effect;
 import androidx.media3.common.Format;
 import androidx.media3.common.Player;
+import androidx.media3.common.Timeline;
 import androidx.media3.common.util.Clock;
 import androidx.media3.common.util.Size;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 import androidx.media3.exoplayer.analytics.PlayerId;
+import androidx.media3.exoplayer.image.ImageOutput;
+import androidx.media3.exoplayer.source.MediaPeriod;
+import androidx.media3.exoplayer.source.MediaSource.MediaPeriodId;
 import androidx.media3.exoplayer.source.SampleStream;
 import androidx.media3.exoplayer.video.VideoDecoderOutputBufferRenderer;
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
@@ -91,9 +95,9 @@ public interface Renderer extends PlayerMessage.Target {
    * #MSG_SET_SCALING_MODE}, {@link #MSG_SET_CHANGE_FRAME_RATE_STRATEGY}, {@link
    * #MSG_SET_AUX_EFFECT_INFO}, {@link #MSG_SET_VIDEO_FRAME_METADATA_LISTENER}, {@link
    * #MSG_SET_CAMERA_MOTION_LISTENER}, {@link #MSG_SET_SKIP_SILENCE_ENABLED}, {@link
-   * #MSG_SET_AUDIO_SESSION_ID}, {@link #MSG_SET_WAKEUP_LISTENER}, {@link #MSG_SET_VIDEO_EFFECTS} or
-   * {@link #MSG_SET_VIDEO_OUTPUT_RESOLUTION}. May also be an app-defined value (see {@link
-   * #MSG_CUSTOM_BASE}).
+   * #MSG_SET_AUDIO_SESSION_ID}, {@link #MSG_SET_WAKEUP_LISTENER}, {@link #MSG_SET_VIDEO_EFFECTS},
+   * {@link #MSG_SET_VIDEO_OUTPUT_RESOLUTION} or {@link #MSG_SET_IMAGE_OUTPUT}. May also be an
+   * app-defined value (see {@link #MSG_CUSTOM_BASE}).
    */
   @Documented
   @Retention(RetentionPolicy.SOURCE)
@@ -113,7 +117,8 @@ public interface Renderer extends PlayerMessage.Target {
         MSG_SET_AUDIO_SESSION_ID,
         MSG_SET_WAKEUP_LISTENER,
         MSG_SET_VIDEO_EFFECTS,
-        MSG_SET_VIDEO_OUTPUT_RESOLUTION
+        MSG_SET_VIDEO_OUTPUT_RESOLUTION,
+        MSG_SET_IMAGE_OUTPUT
       })
   public @interface MessageType {}
 
@@ -242,6 +247,12 @@ public interface Renderer extends PlayerMessage.Target {
   int MSG_SET_VIDEO_OUTPUT_RESOLUTION = 14;
 
   /**
+   * The type of message that can be passed to an image renderer to set a desired image output. The
+   * message payload should be an {@link ImageOutput}.
+   */
+  int MSG_SET_IMAGE_OUTPUT = 15;
+
+  /**
    * Applications or extensions may define custom {@code MSG_*} constants that can be passed to
    * renderers. These custom constants must be greater than or equal to this value.
    */
@@ -347,6 +358,8 @@ public interface Renderer extends PlayerMessage.Target {
    * @param startPositionUs The start position of the stream in renderer time (microseconds).
    * @param offsetUs The offset to be added to timestamps of buffers read from {@code stream} before
    *     they are rendered.
+   * @param mediaPeriodId The {@link MediaPeriodId} of the {@link MediaPeriod} producing the {@code
+   *     stream}.
    * @throws ExoPlaybackException If an error occurs.
    */
   void enable(
@@ -357,7 +370,8 @@ public interface Renderer extends PlayerMessage.Target {
       boolean joining,
       boolean mayRenderStartOfStream,
       long startPositionUs,
-      long offsetUs)
+      long offsetUs,
+      MediaPeriodId mediaPeriodId)
       throws ExoPlaybackException;
 
   /**
@@ -382,9 +396,16 @@ public interface Renderer extends PlayerMessage.Target {
    * @param startPositionUs The start position of the new stream in renderer time (microseconds).
    * @param offsetUs The offset to be added to timestamps of buffers read from {@code stream} before
    *     they are rendered.
+   * @param mediaPeriodId The {@link MediaPeriodId} of the {@link MediaPeriod} producing the {@code
+   *     stream}.
    * @throws ExoPlaybackException If an error occurs.
    */
-  void replaceStream(Format[] formats, SampleStream stream, long startPositionUs, long offsetUs)
+  void replaceStream(
+      Format[] formats,
+      SampleStream stream,
+      long startPositionUs,
+      long offsetUs,
+      MediaPeriodId mediaPeriodId)
       throws ExoPlaybackException;
 
   /** Returns the {@link SampleStream} being consumed, or null if the renderer is disabled. */
@@ -472,6 +493,9 @@ public interface Renderer extends PlayerMessage.Target {
    */
   default void enableMayRenderStartOfStream() {}
 
+  /** Sets the timeline that is currently being played. */
+  void setTimeline(Timeline timeline);
+
   /**
    * Incrementally renders the {@link SampleStream}.
    *
@@ -483,8 +507,8 @@ public interface Renderer extends PlayerMessage.Target {
    * <p>The renderer may also render the very start of the media at the current position (e.g. the
    * first frame of a video stream) while still in the {@link #STATE_ENABLED} state, unless it's the
    * initial start of the media after calling {@link #enable(RendererConfiguration, Format[],
-   * SampleStream, long, boolean, boolean, long, long)} with {@code mayRenderStartOfStream} set to
-   * {@code false}.
+   * SampleStream, long, boolean, boolean, long, long, MediaPeriodId)} with {@code
+   * mayRenderStartOfStream} set to {@code false}.
    *
    * <p>This method should return quickly, and should not block if the renderer is unable to make
    * useful progress.

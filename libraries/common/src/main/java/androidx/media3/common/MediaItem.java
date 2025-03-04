@@ -18,13 +18,16 @@ package androidx.media3.common;
 import static androidx.media3.common.util.Assertions.checkArgument;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkState;
+import static androidx.media3.common.util.Util.msToUs;
+import static androidx.media3.common.util.Util.usToMs;
 
 import android.net.Uri;
 import android.os.Bundle;
 import androidx.annotation.IntRange;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import androidx.media3.common.util.Assertions;
-import androidx.media3.common.util.BundleableUtil;
+import androidx.media3.common.util.BundleCollectionUtil;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 import com.google.common.collect.ImmutableList;
@@ -638,10 +641,10 @@ public final class MediaItem implements Bundleable {
        *
        * @param scheme The {@link UUID} of the protection scheme.
        */
+      @SuppressWarnings("deprecation") // Calling deprecated constructor to reduce code duplication.
       public Builder(UUID scheme) {
+        this();
         this.scheme = scheme;
-        this.licenseRequestHeaders = ImmutableMap.of();
-        this.forcedSessionTrackTypes = ImmutableList.of();
       }
 
       /**
@@ -651,6 +654,7 @@ public final class MediaItem implements Bundleable {
       @Deprecated
       private Builder() {
         this.licenseRequestHeaders = ImmutableMap.of();
+        this.playClearContentWithoutKey = true;
         this.forcedSessionTrackTypes = ImmutableList.of();
       }
 
@@ -704,7 +708,11 @@ public final class MediaItem implements Bundleable {
         return this;
       }
 
-      /** Sets whether multi session is enabled. */
+      /**
+       * Sets whether multi session is enabled.
+       *
+       * <p>The default is {@code false} (multi session disabled).
+       */
       @CanIgnoreReturnValue
       public Builder setMultiSession(boolean multiSession) {
         this.multiSession = multiSession;
@@ -714,6 +722,8 @@ public final class MediaItem implements Bundleable {
       /**
        * Sets whether to always use the default DRM license server URI even if the media specifies
        * its own DRM license server URI.
+       *
+       * <p>The default is {@code false}.
        */
       @CanIgnoreReturnValue
       public Builder setForceDefaultLicenseUri(boolean forceDefaultLicenseUri) {
@@ -724,6 +734,8 @@ public final class MediaItem implements Bundleable {
       /**
        * Sets whether clear samples within protected content should be played when keys for the
        * encrypted part of the content have yet to be loaded.
+       *
+       * <p>The default is {@code true}.
        */
       @CanIgnoreReturnValue
       public Builder setPlayClearContentWithoutKey(boolean playClearContentWithoutKey) {
@@ -751,6 +763,8 @@ public final class MediaItem implements Bundleable {
        *
        * <p>This method overrides what has been set by previously calling {@link
        * #setForcedSessionTrackTypes(List)}.
+       *
+       * <p>The default is {@code false}.
        */
       @CanIgnoreReturnValue
       public Builder setForceSessionsForAudioAndVideoTracks(
@@ -771,6 +785,8 @@ public final class MediaItem implements Bundleable {
        *
        * <p>This method overrides what has been set by previously calling {@link
        * #setForceSessionsForAudioAndVideoTracks(boolean)}.
+       *
+       * <p>The default is an empty list (i.e. DRM sessions are not forced for any track type).
        */
       @CanIgnoreReturnValue
       public Builder setForcedSessionTrackTypes(
@@ -915,29 +931,40 @@ public final class MediaItem implements Bundleable {
     private static final String FIELD_LICENSE_URI = Util.intToStringMaxRadix(1);
     private static final String FIELD_LICENSE_REQUEST_HEADERS = Util.intToStringMaxRadix(2);
     private static final String FIELD_MULTI_SESSION = Util.intToStringMaxRadix(3);
-    private static final String FIELD_PLAY_CLEAR_CONTENT_WITHOUT_KEY = Util.intToStringMaxRadix(4);
+
+    @VisibleForTesting
+    static final String FIELD_PLAY_CLEAR_CONTENT_WITHOUT_KEY = Util.intToStringMaxRadix(4);
+
     private static final String FIELD_FORCE_DEFAULT_LICENSE_URI = Util.intToStringMaxRadix(5);
     private static final String FIELD_FORCED_SESSION_TRACK_TYPES = Util.intToStringMaxRadix(6);
     private static final String FIELD_KEY_SET_ID = Util.intToStringMaxRadix(7);
 
-    /** An object that can restore {@link DrmConfiguration} from a {@link Bundle}. */
+    /**
+     * An object that can restore {@link DrmConfiguration} from a {@link Bundle}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
+     */
     @UnstableApi
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
     public static final Creator<DrmConfiguration> CREATOR = DrmConfiguration::fromBundle;
 
+    /** Restores a {@code DrmConfiguration} from a {@link Bundle}. */
     @UnstableApi
-    private static DrmConfiguration fromBundle(Bundle bundle) {
+    public static DrmConfiguration fromBundle(Bundle bundle) {
       UUID scheme = UUID.fromString(checkNotNull(bundle.getString(FIELD_SCHEME)));
       @Nullable Uri licenseUri = bundle.getParcelable(FIELD_LICENSE_URI);
       Bundle licenseMapAsBundle =
-          BundleableUtil.getBundleWithDefault(bundle, FIELD_LICENSE_REQUEST_HEADERS, Bundle.EMPTY);
+          BundleCollectionUtil.getBundleWithDefault(
+              bundle, FIELD_LICENSE_REQUEST_HEADERS, Bundle.EMPTY);
       ImmutableMap<String, String> licenseRequestHeaders =
-          BundleableUtil.bundleToStringImmutableMap(licenseMapAsBundle);
+          BundleCollectionUtil.bundleToStringImmutableMap(licenseMapAsBundle);
       boolean multiSession = bundle.getBoolean(FIELD_MULTI_SESSION, false);
       boolean playClearContentWithoutKey =
           bundle.getBoolean(FIELD_PLAY_CLEAR_CONTENT_WITHOUT_KEY, false);
       boolean forceDefaultLicenseUri = bundle.getBoolean(FIELD_FORCE_DEFAULT_LICENSE_URI, false);
       ArrayList<@C.TrackType Integer> forcedSessionTrackTypesArray =
-          BundleableUtil.getIntegerArrayListWithDefault(
+          BundleCollectionUtil.getIntegerArrayListWithDefault(
               bundle, FIELD_FORCED_SESSION_TRACK_TYPES, new ArrayList<>());
       ImmutableList<@C.TrackType Integer> forcedSessionTrackTypes =
           ImmutableList.copyOf(forcedSessionTrackTypesArray);
@@ -965,7 +992,8 @@ public final class MediaItem implements Bundleable {
       }
       if (!licenseRequestHeaders.isEmpty()) {
         bundle.putBundle(
-            FIELD_LICENSE_REQUEST_HEADERS, BundleableUtil.stringMapToBundle(licenseRequestHeaders));
+            FIELD_LICENSE_REQUEST_HEADERS,
+            BundleCollectionUtil.stringMapToBundle(licenseRequestHeaders));
       }
       if (multiSession) {
         bundle.putBoolean(FIELD_MULTI_SESSION, multiSession);
@@ -1081,12 +1109,17 @@ public final class MediaItem implements Bundleable {
      * An object that can restore {@link AdsConfiguration} from a {@link Bundle}.
      *
      * <p>The {@link #adsId} of a restored instance will always be {@code null}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
      */
     @UnstableApi
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
     public static final Creator<AdsConfiguration> CREATOR = AdsConfiguration::fromBundle;
 
+    /** Restores a {@code AdsConfiguration} from a {@link Bundle}. */
     @UnstableApi
-    private static AdsConfiguration fromBundle(Bundle bundle) {
+    public static AdsConfiguration fromBundle(Bundle bundle) {
       @Nullable Uri adTagUri = bundle.getParcelable(FIELD_AD_TAG_URI);
       checkNotNull(adTagUri);
       return new AdsConfiguration.Builder(adTagUri).build();
@@ -1163,7 +1196,7 @@ public final class MediaItem implements Bundleable {
         @Nullable Object tag,
         long imageDurationMs) {
       this.uri = uri;
-      this.mimeType = mimeType;
+      this.mimeType = MimeTypes.normalizeMimeType(mimeType);
       this.drmConfiguration = drmConfiguration;
       this.adsConfiguration = adsConfiguration;
       this.streamKeys = streamKeys;
@@ -1246,14 +1279,17 @@ public final class MediaItem implements Bundleable {
       }
       if (!streamKeys.isEmpty()) {
         bundle.putParcelableArrayList(
-            FIELD_STREAM_KEYS, BundleableUtil.toBundleArrayList(streamKeys));
+            FIELD_STREAM_KEYS,
+            BundleCollectionUtil.toBundleArrayList(streamKeys, StreamKey::toBundle));
       }
       if (customCacheKey != null) {
         bundle.putString(FIELD_CUSTOM_CACHE_KEY, customCacheKey);
       }
       if (!subtitleConfigurations.isEmpty()) {
         bundle.putParcelableArrayList(
-            FIELD_SUBTITLE_CONFIGURATION, BundleableUtil.toBundleArrayList(subtitleConfigurations));
+            FIELD_SUBTITLE_CONFIGURATION,
+            BundleCollectionUtil.toBundleArrayList(
+                subtitleConfigurations, SubtitleConfiguration::toBundle));
       }
       if (imageDurationMs != C.TIME_UNSET) {
         bundle.putLong(FIELD_IMAGE_DURATION_MS, imageDurationMs);
@@ -1261,29 +1297,37 @@ public final class MediaItem implements Bundleable {
       return bundle;
     }
 
-    /** Object that can restore {@link LocalConfiguration} from a {@link Bundle}. */
+    /**
+     * Object that can restore {@link LocalConfiguration} from a {@link Bundle}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
+     */
     @UnstableApi
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
     public static final Creator<LocalConfiguration> CREATOR = LocalConfiguration::fromBundle;
 
+    /** Restores a {@code LocalConfiguration} from a {@link Bundle}. */
     @UnstableApi
-    private static LocalConfiguration fromBundle(Bundle bundle) {
+    public static LocalConfiguration fromBundle(Bundle bundle) {
       @Nullable Bundle drmBundle = bundle.getBundle(FIELD_DRM_CONFIGURATION);
       DrmConfiguration drmConfiguration =
-          drmBundle == null ? null : DrmConfiguration.CREATOR.fromBundle(drmBundle);
+          drmBundle == null ? null : DrmConfiguration.fromBundle(drmBundle);
       @Nullable Bundle adsBundle = bundle.getBundle(FIELD_ADS_CONFIGURATION);
       AdsConfiguration adsConfiguration =
-          adsBundle == null ? null : AdsConfiguration.CREATOR.fromBundle(adsBundle);
+          adsBundle == null ? null : AdsConfiguration.fromBundle(adsBundle);
       @Nullable List<Bundle> streamKeysBundles = bundle.getParcelableArrayList(FIELD_STREAM_KEYS);
       List<StreamKey> streamKeys =
           streamKeysBundles == null
               ? ImmutableList.of()
-              : BundleableUtil.fromBundleList(StreamKey::fromBundle, streamKeysBundles);
+              : BundleCollectionUtil.fromBundleList(StreamKey::fromBundle, streamKeysBundles);
       @Nullable
       List<Bundle> subtitleBundles = bundle.getParcelableArrayList(FIELD_SUBTITLE_CONFIGURATION);
       ImmutableList<SubtitleConfiguration> subtitleConfiguration =
           subtitleBundles == null
               ? ImmutableList.of()
-              : BundleableUtil.fromBundleList(SubtitleConfiguration.CREATOR, subtitleBundles);
+              : BundleCollectionUtil.fromBundleList(
+                  SubtitleConfiguration::fromBundle, subtitleBundles);
       long imageDurationMs = bundle.getLong(FIELD_IMAGE_DURATION_MS, C.TIME_UNSET);
 
       return new LocalConfiguration(
@@ -1520,18 +1564,26 @@ public final class MediaItem implements Bundleable {
       return bundle;
     }
 
-    /** An object that can restore {@link LiveConfiguration} from a {@link Bundle}. */
+    /**
+     * An object that can restore {@link LiveConfiguration} from a {@link Bundle}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
+     */
     @UnstableApi
-    public static final Creator<LiveConfiguration> CREATOR =
-        bundle ->
-            new LiveConfiguration(
-                bundle.getLong(FIELD_TARGET_OFFSET_MS, /* defaultValue= */ UNSET.targetOffsetMs),
-                bundle.getLong(FIELD_MIN_OFFSET_MS, /* defaultValue= */ UNSET.minOffsetMs),
-                bundle.getLong(FIELD_MAX_OFFSET_MS, /* defaultValue= */ UNSET.maxOffsetMs),
-                bundle.getFloat(
-                    FIELD_MIN_PLAYBACK_SPEED, /* defaultValue= */ UNSET.minPlaybackSpeed),
-                bundle.getFloat(
-                    FIELD_MAX_PLAYBACK_SPEED, /* defaultValue= */ UNSET.maxPlaybackSpeed));
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
+    public static final Creator<LiveConfiguration> CREATOR = LiveConfiguration::fromBundle;
+
+    /** Restores a {@code LiveConfiguration} from a {@link Bundle}. */
+    @UnstableApi
+    public static LiveConfiguration fromBundle(Bundle bundle) {
+      return new LiveConfiguration(
+          bundle.getLong(FIELD_TARGET_OFFSET_MS, /* defaultValue= */ UNSET.targetOffsetMs),
+          bundle.getLong(FIELD_MIN_OFFSET_MS, /* defaultValue= */ UNSET.minOffsetMs),
+          bundle.getLong(FIELD_MAX_OFFSET_MS, /* defaultValue= */ UNSET.maxOffsetMs),
+          bundle.getFloat(FIELD_MIN_PLAYBACK_SPEED, /* defaultValue= */ UNSET.minPlaybackSpeed),
+          bundle.getFloat(FIELD_MAX_PLAYBACK_SPEED, /* defaultValue= */ UNSET.maxPlaybackSpeed));
+    }
   }
 
   /** Properties for a text track. */
@@ -1579,7 +1631,7 @@ public final class MediaItem implements Bundleable {
       /** Sets the MIME type. */
       @CanIgnoreReturnValue
       public Builder setMimeType(@Nullable String mimeType) {
-        this.mimeType = mimeType;
+        this.mimeType = MimeTypes.normalizeMimeType(mimeType);
         return this;
       }
 
@@ -1669,7 +1721,7 @@ public final class MediaItem implements Bundleable {
         @Nullable List<byte[]> initializationData,
         @Nullable String id) {
       this.uri = uri;
-      this.mimeType = mimeType;
+      this.mimeType = MimeTypes.normalizeMimeType(mimeType);
       this.language = language;
       this.selectionFlags = selectionFlags;
       this.roleFlags = roleFlags;
@@ -1736,12 +1788,19 @@ public final class MediaItem implements Bundleable {
     private static final String FIELD_LABEL = Util.intToStringMaxRadix(5);
     private static final String FIELD_ID = Util.intToStringMaxRadix(6);
 
-    /** An object that can restore {@link SubtitleConfiguration} from a {@link Bundle}. */
+    /**
+     * An object that can restore {@link SubtitleConfiguration} from a {@link Bundle}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
+     */
     @UnstableApi
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
     public static final Creator<SubtitleConfiguration> CREATOR = SubtitleConfiguration::fromBundle;
 
+    /** Restores a {@code SubtitleConfiguration} from a {@link Bundle}. */
     @UnstableApi
-    private static SubtitleConfiguration fromBundle(Bundle bundle) {
+    public static SubtitleConfiguration fromBundle(Bundle bundle) {
       Uri uri = checkNotNull(bundle.getParcelable(FIELD_URI));
       @Nullable String mimeType = bundle.getString(FIELD_MIME_TYPE);
       @Nullable String language = bundle.getString(FIELD_LANGUAGE);
@@ -1843,20 +1902,20 @@ public final class MediaItem implements Bundleable {
 
     /** Builder for {@link ClippingConfiguration} instances. */
     public static final class Builder {
-      private long startPositionMs;
-      private long endPositionMs;
+      private long startPositionUs;
+      private long endPositionUs;
       private boolean relativeToLiveWindow;
       private boolean relativeToDefaultPosition;
       private boolean startsAtKeyFrame;
 
       /** Creates a new instance with default values. */
       public Builder() {
-        endPositionMs = C.TIME_END_OF_SOURCE;
+        endPositionUs = C.TIME_END_OF_SOURCE;
       }
 
       private Builder(ClippingConfiguration clippingConfiguration) {
-        startPositionMs = clippingConfiguration.startPositionMs;
-        endPositionMs = clippingConfiguration.endPositionMs;
+        startPositionUs = clippingConfiguration.startPositionUs;
+        endPositionUs = clippingConfiguration.endPositionUs;
         relativeToLiveWindow = clippingConfiguration.relativeToLiveWindow;
         relativeToDefaultPosition = clippingConfiguration.relativeToDefaultPosition;
         startsAtKeyFrame = clippingConfiguration.startsAtKeyFrame;
@@ -1868,8 +1927,18 @@ public final class MediaItem implements Bundleable {
        */
       @CanIgnoreReturnValue
       public Builder setStartPositionMs(@IntRange(from = 0) long startPositionMs) {
-        Assertions.checkArgument(startPositionMs >= 0);
-        this.startPositionMs = startPositionMs;
+        return setStartPositionUs(msToUs(startPositionMs));
+      }
+
+      /**
+       * Sets the optional start position in microseconds which must be a value larger than or equal
+       * to zero (Default: 0).
+       */
+      @UnstableApi
+      @CanIgnoreReturnValue
+      public Builder setStartPositionUs(@IntRange(from = 0) long startPositionUs) {
+        Assertions.checkArgument(startPositionUs >= 0);
+        this.startPositionUs = startPositionUs;
         return this;
       }
 
@@ -1880,8 +1949,19 @@ public final class MediaItem implements Bundleable {
        */
       @CanIgnoreReturnValue
       public Builder setEndPositionMs(long endPositionMs) {
-        Assertions.checkArgument(endPositionMs == C.TIME_END_OF_SOURCE || endPositionMs >= 0);
-        this.endPositionMs = endPositionMs;
+        return setEndPositionUs(msToUs(endPositionMs));
+      }
+
+      /**
+       * Sets the optional end position in milliseconds which must be a value larger than or equal
+       * to zero, or {@link C#TIME_END_OF_SOURCE} to end when playback reaches the end of media
+       * (Default: {@link C#TIME_END_OF_SOURCE}).
+       */
+      @UnstableApi
+      @CanIgnoreReturnValue
+      public Builder setEndPositionUs(long endPositionUs) {
+        Assertions.checkArgument(endPositionUs == C.TIME_END_OF_SOURCE || endPositionUs >= 0);
+        this.endPositionUs = endPositionUs;
         return this;
       }
 
@@ -1938,11 +2018,22 @@ public final class MediaItem implements Bundleable {
     @IntRange(from = 0)
     public final long startPositionMs;
 
+    /** The start position in microseconds. This is a value larger than or equal to zero. */
+    @UnstableApi
+    @IntRange(from = 0)
+    public final long startPositionUs;
+
     /**
      * The end position in milliseconds. This is a value larger than or equal to zero or {@link
      * C#TIME_END_OF_SOURCE} to play to the end of the stream.
      */
     public final long endPositionMs;
+
+    /**
+     * The end position in microseconds. This is a value larger than or equal to zero or {@link
+     * C#TIME_END_OF_SOURCE} to play to the end of the stream.
+     */
+    @UnstableApi public final long endPositionUs;
 
     /**
      * Whether the clipping of active media periods moves with a live window. If {@code false},
@@ -1960,8 +2051,10 @@ public final class MediaItem implements Bundleable {
     public final boolean startsAtKeyFrame;
 
     private ClippingConfiguration(Builder builder) {
-      this.startPositionMs = builder.startPositionMs;
-      this.endPositionMs = builder.endPositionMs;
+      this.startPositionMs = usToMs(builder.startPositionUs);
+      this.endPositionMs = usToMs(builder.endPositionUs);
+      this.startPositionUs = builder.startPositionUs;
+      this.endPositionUs = builder.endPositionUs;
       this.relativeToLiveWindow = builder.relativeToLiveWindow;
       this.relativeToDefaultPosition = builder.relativeToDefaultPosition;
       this.startsAtKeyFrame = builder.startsAtKeyFrame;
@@ -1983,8 +2076,8 @@ public final class MediaItem implements Bundleable {
 
       ClippingConfiguration other = (ClippingConfiguration) obj;
 
-      return startPositionMs == other.startPositionMs
-          && endPositionMs == other.endPositionMs
+      return startPositionUs == other.startPositionUs
+          && endPositionUs == other.endPositionUs
           && relativeToLiveWindow == other.relativeToLiveWindow
           && relativeToDefaultPosition == other.relativeToDefaultPosition
           && startsAtKeyFrame == other.startsAtKeyFrame;
@@ -1992,8 +2085,8 @@ public final class MediaItem implements Bundleable {
 
     @Override
     public int hashCode() {
-      int result = (int) (startPositionMs ^ (startPositionMs >>> 32));
-      result = 31 * result + (int) (endPositionMs ^ (endPositionMs >>> 32));
+      int result = (int) (startPositionUs ^ (startPositionUs >>> 32));
+      result = 31 * result + (int) (endPositionUs ^ (endPositionUs >>> 32));
       result = 31 * result + (relativeToLiveWindow ? 1 : 0);
       result = 31 * result + (relativeToDefaultPosition ? 1 : 0);
       result = 31 * result + (startsAtKeyFrame ? 1 : 0);
@@ -2007,6 +2100,8 @@ public final class MediaItem implements Bundleable {
     private static final String FIELD_RELATIVE_TO_LIVE_WINDOW = Util.intToStringMaxRadix(2);
     private static final String FIELD_RELATIVE_TO_DEFAULT_POSITION = Util.intToStringMaxRadix(3);
     private static final String FIELD_STARTS_AT_KEY_FRAME = Util.intToStringMaxRadix(4);
+    static final String FIELD_START_POSITION_US = Util.intToStringMaxRadix(5);
+    static final String FIELD_END_POSITION_US = Util.intToStringMaxRadix(6);
 
     @UnstableApi
     @Override
@@ -2017,6 +2112,12 @@ public final class MediaItem implements Bundleable {
       }
       if (endPositionMs != UNSET.endPositionMs) {
         bundle.putLong(FIELD_END_POSITION_MS, endPositionMs);
+      }
+      if (startPositionUs != UNSET.startPositionUs) {
+        bundle.putLong(FIELD_START_POSITION_US, startPositionUs);
+      }
+      if (endPositionUs != UNSET.endPositionUs) {
+        bundle.putLong(FIELD_END_POSITION_US, endPositionUs);
       }
       if (relativeToLiveWindow != UNSET.relativeToLiveWindow) {
         bundle.putBoolean(FIELD_RELATIVE_TO_LIVE_WINDOW, relativeToLiveWindow);
@@ -2030,28 +2131,49 @@ public final class MediaItem implements Bundleable {
       return bundle;
     }
 
-    /** An object that can restore {@link ClippingConfiguration} from a {@link Bundle}. */
+    /**
+     * An object that can restore {@link ClippingConfiguration} from a {@link Bundle}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
+     */
     @UnstableApi
-    public static final Creator<ClippingProperties> CREATOR =
-        bundle ->
-            new ClippingConfiguration.Builder()
-                .setStartPositionMs(
-                    bundle.getLong(
-                        FIELD_START_POSITION_MS, /* defaultValue= */ UNSET.startPositionMs))
-                .setEndPositionMs(
-                    bundle.getLong(FIELD_END_POSITION_MS, /* defaultValue= */ UNSET.endPositionMs))
-                .setRelativeToLiveWindow(
-                    bundle.getBoolean(
-                        FIELD_RELATIVE_TO_LIVE_WINDOW,
-                        /* defaultValue= */ UNSET.relativeToLiveWindow))
-                .setRelativeToDefaultPosition(
-                    bundle.getBoolean(
-                        FIELD_RELATIVE_TO_DEFAULT_POSITION,
-                        /* defaultValue= */ UNSET.relativeToDefaultPosition))
-                .setStartsAtKeyFrame(
-                    bundle.getBoolean(
-                        FIELD_STARTS_AT_KEY_FRAME, /* defaultValue= */ UNSET.startsAtKeyFrame))
-                .buildClippingProperties();
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
+    public static final Creator<ClippingProperties> CREATOR = ClippingConfiguration::fromBundle;
+
+    /** Restores a {@code ClippingProperties} from a {@link Bundle}. */
+    @UnstableApi
+    public static ClippingProperties fromBundle(Bundle bundle) {
+      ClippingConfiguration.Builder clippingConfiguration =
+          new ClippingConfiguration.Builder()
+              .setStartPositionMs(
+                  bundle.getLong(
+                      FIELD_START_POSITION_MS, /* defaultValue= */ UNSET.startPositionMs))
+              .setEndPositionMs(
+                  bundle.getLong(FIELD_END_POSITION_MS, /* defaultValue= */ UNSET.endPositionMs))
+              .setRelativeToLiveWindow(
+                  bundle.getBoolean(
+                      FIELD_RELATIVE_TO_LIVE_WINDOW,
+                      /* defaultValue= */ UNSET.relativeToLiveWindow))
+              .setRelativeToDefaultPosition(
+                  bundle.getBoolean(
+                      FIELD_RELATIVE_TO_DEFAULT_POSITION,
+                      /* defaultValue= */ UNSET.relativeToDefaultPosition))
+              .setStartsAtKeyFrame(
+                  bundle.getBoolean(
+                      FIELD_STARTS_AT_KEY_FRAME, /* defaultValue= */ UNSET.startsAtKeyFrame));
+      long startPositionUs =
+          bundle.getLong(FIELD_START_POSITION_US, /* defaultValue= */ UNSET.startPositionUs);
+      if (startPositionUs != UNSET.startPositionUs) {
+        clippingConfiguration.setStartPositionUs(startPositionUs);
+      }
+      long endPositionUs =
+          bundle.getLong(FIELD_END_POSITION_US, /* defaultValue= */ UNSET.endPositionUs);
+      if (endPositionUs != UNSET.endPositionUs) {
+        clippingConfiguration.setEndPositionUs(endPositionUs);
+      }
+      return clippingConfiguration.buildClippingProperties();
+    }
   }
 
   /**
@@ -2190,15 +2312,25 @@ public final class MediaItem implements Bundleable {
       return bundle;
     }
 
-    /** An object that can restore {@link RequestMetadata} from a {@link Bundle}. */
+    /**
+     * An object that can restore {@link RequestMetadata} from a {@link Bundle}.
+     *
+     * @deprecated Use {@link #fromBundle} instead.
+     */
     @UnstableApi
-    public static final Creator<RequestMetadata> CREATOR =
-        bundle ->
-            new RequestMetadata.Builder()
-                .setMediaUri(bundle.getParcelable(FIELD_MEDIA_URI))
-                .setSearchQuery(bundle.getString(FIELD_SEARCH_QUERY))
-                .setExtras(bundle.getBundle(FIELD_EXTRAS))
-                .build();
+    @Deprecated
+    @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
+    public static final Creator<RequestMetadata> CREATOR = RequestMetadata::fromBundle;
+
+    /** Restores a {@code RequestMetadata} from a {@link Bundle}. */
+    @UnstableApi
+    public static RequestMetadata fromBundle(Bundle bundle) {
+      return new RequestMetadata.Builder()
+          .setMediaUri(bundle.getParcelable(FIELD_MEDIA_URI))
+          .setSearchQuery(bundle.getString(FIELD_SEARCH_QUERY))
+          .setExtras(bundle.getBundle(FIELD_EXTRAS))
+          .build();
+    }
   }
 
   /**
@@ -2349,49 +2481,60 @@ public final class MediaItem implements Bundleable {
   }
 
   /**
-   * An object that can restore {@link MediaItem} from a {@link Bundle}.
+   * An object that can restore {@code MediaItem} from a {@link Bundle}.
+   *
+   * <p>The {@link #localConfiguration} of a restored instance will always be {@code null}.
+   *
+   * @deprecated Use {@link #fromBundle} instead.
+   */
+  @UnstableApi
+  @Deprecated
+  @SuppressWarnings("deprecation") // Deprecated instance of deprecated class
+  public static final Creator<MediaItem> CREATOR = MediaItem::fromBundle;
+
+  /**
+   * Restores a {@code MediaItem} from a {@link Bundle}.
    *
    * <p>The {@link #localConfiguration} of a restored instance will always be {@code null}.
    */
-  @UnstableApi public static final Creator<MediaItem> CREATOR = MediaItem::fromBundle;
-
+  @UnstableApi
   @SuppressWarnings("deprecation") // Unbundling to ClippingProperties while it still exists.
-  private static MediaItem fromBundle(Bundle bundle) {
+  public static MediaItem fromBundle(Bundle bundle) {
     String mediaId = checkNotNull(bundle.getString(FIELD_MEDIA_ID, DEFAULT_MEDIA_ID));
     @Nullable Bundle liveConfigurationBundle = bundle.getBundle(FIELD_LIVE_CONFIGURATION);
     LiveConfiguration liveConfiguration;
     if (liveConfigurationBundle == null) {
       liveConfiguration = LiveConfiguration.UNSET;
     } else {
-      liveConfiguration = LiveConfiguration.CREATOR.fromBundle(liveConfigurationBundle);
+      liveConfiguration = LiveConfiguration.fromBundle(liveConfigurationBundle);
     }
     @Nullable Bundle mediaMetadataBundle = bundle.getBundle(FIELD_MEDIA_METADATA);
     MediaMetadata mediaMetadata;
     if (mediaMetadataBundle == null) {
       mediaMetadata = MediaMetadata.EMPTY;
     } else {
-      mediaMetadata = MediaMetadata.CREATOR.fromBundle(mediaMetadataBundle);
+      mediaMetadata = MediaMetadata.fromBundle(mediaMetadataBundle);
     }
     @Nullable Bundle clippingConfigurationBundle = bundle.getBundle(FIELD_CLIPPING_PROPERTIES);
     ClippingProperties clippingConfiguration;
     if (clippingConfigurationBundle == null) {
       clippingConfiguration = ClippingProperties.UNSET;
     } else {
-      clippingConfiguration = ClippingConfiguration.CREATOR.fromBundle(clippingConfigurationBundle);
+      clippingConfiguration = ClippingConfiguration.fromBundle(clippingConfigurationBundle);
     }
     @Nullable Bundle requestMetadataBundle = bundle.getBundle(FIELD_REQUEST_METADATA);
     RequestMetadata requestMetadata;
     if (requestMetadataBundle == null) {
       requestMetadata = RequestMetadata.EMPTY;
     } else {
-      requestMetadata = RequestMetadata.CREATOR.fromBundle(requestMetadataBundle);
+      requestMetadata = RequestMetadata.fromBundle(requestMetadataBundle);
     }
     @Nullable Bundle localConfigurationBundle = bundle.getBundle(FIELD_LOCAL_CONFIGURATION);
     LocalConfiguration localConfiguration;
     if (localConfigurationBundle == null) {
       localConfiguration = null;
     } else {
-      localConfiguration = LocalConfiguration.CREATOR.fromBundle(localConfigurationBundle);
+      localConfiguration = LocalConfiguration.fromBundle(localConfigurationBundle);
     }
     return new MediaItem(
         mediaId,

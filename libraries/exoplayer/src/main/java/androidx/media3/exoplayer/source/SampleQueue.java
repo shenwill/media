@@ -228,8 +228,9 @@ public class SampleQueue implements TrackOutput {
   }
 
   /**
-   * Sets the start time for the queue. Samples with earlier timestamps will be discarded or have
-   * the {@link C#BUFFER_FLAG_DECODE_ONLY} flag set when read.
+   * Sets the start time for the queue. Samples with earlier timestamps will be discarded if
+   * {@linkplain MimeTypes#allSamplesAreSyncSamples all samples are sync samples} in the given input
+   * format.
    *
    * @param startTimeUs The start time, in microseconds.
    */
@@ -692,7 +693,9 @@ public class SampleQueue implements TrackOutput {
     sampleDataQueue.rewind();
   }
 
-  @SuppressWarnings("ReferenceEquality") // See comments in setUpstreamFormat
+  // Setting deprecated decode-only flag for compatibility with renderers that are still using it.
+  // See comments in setUpstreamFormat for reference equality warning.
+  @SuppressWarnings({"ReferenceEquality", "deprecation"})
   private synchronized int peekSampleMetadata(
       FormatHolder formatHolder,
       DecoderInputBuffer buffer,
@@ -827,14 +830,14 @@ public class SampleQueue implements TrackOutput {
 
     if (sharedSampleMetadata.isEmpty()
         || !sharedSampleMetadata.getEndValue().format.equals(upstreamFormat)) {
+      Format upstreamFormat = checkNotNull(this.upstreamFormat);
       DrmSessionReference drmSessionReference =
           drmSessionManager != null
               ? drmSessionManager.preacquireSession(drmEventDispatcher, upstreamFormat)
               : DrmSessionReference.EMPTY;
 
       sharedSampleMetadata.appendSpan(
-          getWriteIndex(),
-          new SharedSampleMetadata(checkNotNull(upstreamFormat), drmSessionReference));
+          getWriteIndex(), new SharedSampleMetadata(upstreamFormat, drmSessionReference));
     }
 
     length++;
@@ -918,7 +921,8 @@ public class SampleQueue implements TrackOutput {
    */
   private void onFormatResult(Format newFormat, FormatHolder outputFormatHolder) {
     boolean isFirstFormat = downstreamFormat == null;
-    @Nullable DrmInitData oldDrmInitData = isFirstFormat ? null : downstreamFormat.drmInitData;
+    @Nullable
+    DrmInitData oldDrmInitData = downstreamFormat == null ? null : downstreamFormat.drmInitData;
     downstreamFormat = newFormat;
     @Nullable DrmInitData newDrmInitData = newFormat.drmInitData;
 

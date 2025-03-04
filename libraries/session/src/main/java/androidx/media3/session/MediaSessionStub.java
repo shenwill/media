@@ -29,6 +29,7 @@ import static androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT;
 import static androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM;
 import static androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS;
 import static androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM;
+import static androidx.media3.common.Player.COMMAND_SET_AUDIO_ATTRIBUTES;
 import static androidx.media3.common.Player.COMMAND_SET_DEVICE_VOLUME;
 import static androidx.media3.common.Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS;
 import static androidx.media3.common.Player.COMMAND_SET_MEDIA_ITEM;
@@ -65,6 +66,7 @@ import android.view.Surface;
 import androidx.annotation.Nullable;
 import androidx.core.util.ObjectsCompat;
 import androidx.media.MediaSessionManager;
+import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.BundleListRetriever;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
@@ -78,7 +80,7 @@ import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.Assertions;
-import androidx.media3.common.util.BundleableUtil;
+import androidx.media3.common.util.BundleCollectionUtil;
 import androidx.media3.common.util.Consumer;
 import androidx.media3.common.util.Log;
 import androidx.media3.common.util.Util;
@@ -114,6 +116,12 @@ import java.util.concurrent.ExecutionException;
 
   /** The version of the IMediaSession interface. */
   public static final int VERSION_INT = 2;
+
+  /**
+   * Sequence number used when a controller method is triggered on the sesison side that wasn't
+   * initiated by the controller itself.
+   */
+  public static final int UNKNOWN_SEQUENCE_NUMBER = Integer.MIN_VALUE;
 
   private final WeakReference<MediaSessionImpl> sessionImpl;
   private final MediaSessionManager sessionManager;
@@ -283,17 +291,24 @@ import java.util.concurrent.ExecutionException;
       int sequenceNumber,
       @Player.Command int command,
       SessionTask<ListenableFuture<Void>, K> task) {
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      queueSessionTaskWithPlayerCommandForControllerInfo(
+          controllerInfo, sequenceNumber, command, task);
+    }
+  }
+
+  private <K extends MediaSessionImpl> void queueSessionTaskWithPlayerCommandForControllerInfo(
+      ControllerInfo controller,
+      int sequenceNumber,
+      @Player.Command int command,
+      SessionTask<ListenableFuture<Void>, K> task) {
     long token = Binder.clearCallingIdentity();
     try {
       @SuppressWarnings({"unchecked", "cast.unsafe"})
       @Nullable
       K sessionImpl = (K) this.sessionImpl.get();
       if (sessionImpl == null || sessionImpl.isReleased()) {
-        return;
-      }
-      @Nullable
-      ControllerInfo controller = connectedControllersManager.getController(caller.asBinder());
-      if (controller == null) {
         return;
       }
       postOrRun(
@@ -438,24 +453,8 @@ import java.util.concurrent.ExecutionException;
     return mediaItemIndex;
   }
 
-  public void connect(
-      IMediaController caller,
-      int controllerVersion,
-      int controllerInterfaceVersion,
-      String callingPackage,
-      int pid,
-      int uid,
-      Bundle connectionHints) {
-    MediaSessionManager.RemoteUserInfo remoteUserInfo =
-        new MediaSessionManager.RemoteUserInfo(callingPackage, pid, uid);
-    ControllerInfo controllerInfo =
-        new ControllerInfo(
-            remoteUserInfo,
-            controllerVersion,
-            controllerInterfaceVersion,
-            sessionManager.isTrustedForMediaControl(remoteUserInfo),
-            new Controller2Cb(caller),
-            connectionHints);
+  @SuppressWarnings("UngroupedOverloads") // Overload belongs to AIDL interface that is separated.
+  public void connect(IMediaController caller, ControllerInfo controllerInfo) {
     @Nullable MediaSessionImpl sessionImpl = this.sessionImpl.get();
     if (sessionImpl == null || sessionImpl.isReleased()) {
       try {
@@ -529,6 +528,9 @@ import java.util.concurrent.ExecutionException;
                     connectionResult.availablePlayerCommands,
                     playerWrapper.getAvailableCommands(),
                     sessionImpl.getToken().getExtras(),
+                    connectionResult.sessionExtras != null
+                        ? connectionResult.sessionExtras
+                        : sessionImpl.getSessionExtras(),
                     playerInfo);
 
             // Double check if session is still there, because release() can be called in
@@ -538,12 +540,17 @@ import java.util.concurrent.ExecutionException;
             }
             try {
               caller.onConnected(
-                  sequencedFutureManager.obtainNextSequenceNumber(), state.toBundle());
+                  sequencedFutureManager.obtainNextSequenceNumber(),
+                  caller instanceof MediaControllerStub
+                      ? state.toBundleInProcess()
+                      : state.toBundleForRemoteProcess(controllerInfo.getInterfaceVersion()));
               connected = true;
             } catch (RemoteException e) {
               // Controller may be died prematurely.
             }
-            sessionImpl.onPostConnectOnHandler(controllerInfo);
+            if (connected) {
+              sessionImpl.onPostConnectOnHandler(controllerInfo);
+            }
           } finally {
             if (!connected) {
               try {
@@ -596,7 +603,7 @@ import java.util.concurrent.ExecutionException;
     }
     ConnectionRequest request;
     try {
-      request = ConnectionRequest.CREATOR.fromBundle(connectionRequestBundle);
+      request = ConnectionRequest.fromBundle(connectionRequestBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for ConnectionRequest", e);
       return;
@@ -608,14 +615,18 @@ import java.util.concurrent.ExecutionException;
     // If it's the case, use PID from the ConnectionRequest.
     int pid = (callingPid != 0) ? callingPid : request.pid;
     try {
-      connect(
-          caller,
-          request.libraryVersion,
-          request.controllerInterfaceVersion,
-          request.packageName,
-          pid,
-          uid,
-          request.connectionHints);
+
+      MediaSessionManager.RemoteUserInfo remoteUserInfo =
+          new MediaSessionManager.RemoteUserInfo(request.packageName, pid, uid);
+      ControllerInfo controllerInfo =
+          new ControllerInfo(
+              remoteUserInfo,
+              request.libraryVersion,
+              request.controllerInterfaceVersion,
+              sessionManager.isTrustedForMediaControl(remoteUserInfo),
+              new MediaSessionStub.Controller2Cb(caller),
+              request.connectionHints);
+      connect(caller, controllerInfo);
     } finally {
       Binder.restoreCallingIdentity(token);
     }
@@ -626,8 +637,19 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
-    queueSessionTaskWithPlayerCommand(
-        caller, sequenceNumber, COMMAND_STOP, sendSessionResultSuccess(player -> player.stop()));
+    @Nullable
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      stopForControllerInfo(controllerInfo, sequenceNumber);
+    }
+  }
+
+  public void stopForControllerInfo(ControllerInfo controllerInfo, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controllerInfo,
+        sequenceNumber,
+        COMMAND_STOP,
+        sendSessionResultSuccess(PlayerWrapper::stop));
   }
 
   @Override
@@ -658,7 +680,7 @@ import java.util.concurrent.ExecutionException;
     }
     SessionResult result;
     try {
-      result = SessionResult.CREATOR.fromBundle(sessionResultBundle);
+      result = SessionResult.fromBundle(sessionResultBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for SessionResult", e);
       return;
@@ -682,31 +704,25 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
+    @Nullable
     ControllerInfo controller = connectedControllersManager.getController(caller.asBinder());
-    if (controller == null) {
-      return;
+    if (controller != null) {
+      playForControllerInfo(controller, sequenceNumber);
     }
-    queueSessionTaskWithPlayerCommand(
-        caller,
+  }
+
+  public void playForControllerInfo(ControllerInfo controller, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controller,
         sequenceNumber,
         COMMAND_PLAY_PAUSE,
         sendSessionResultSuccess(
             player -> {
-              @Nullable MediaSessionImpl sessionImpl = this.sessionImpl.get();
-              if (sessionImpl == null || sessionImpl.isReleased()) {
+              @Nullable MediaSessionImpl impl = sessionImpl.get();
+              if (impl == null || impl.isReleased()) {
                 return;
               }
-              if (sessionImpl.onPlayRequested()) {
-                if (player.getMediaItemCount() == 0) {
-                  // The player is in IDLE or ENDED state and has no media items in the playlist
-                  // yet.
-                  // Handle the play command as a playback resumption command to try resume
-                  // playback.
-                  sessionImpl.prepareAndPlayForPlaybackResumption(controller, player);
-                } else {
-                  Util.handlePlayButtonAction(player);
-                }
-              }
+              impl.handleMediaControllerPlayRequest(controller);
             }));
   }
 
@@ -715,8 +731,16 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
-    queueSessionTaskWithPlayerCommand(
-        caller, sequenceNumber, COMMAND_PLAY_PAUSE, sendSessionResultSuccess(Player::pause));
+    @Nullable
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      pauseForControllerInfo(controllerInfo, sequenceNumber);
+    }
+  }
+
+  public void pauseForControllerInfo(ControllerInfo controller, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controller, sequenceNumber, COMMAND_PLAY_PAUSE, sendSessionResultSuccess(Player::pause));
   }
 
   @Override
@@ -792,8 +816,19 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
-    queueSessionTaskWithPlayerCommand(
-        caller, sequenceNumber, COMMAND_SEEK_BACK, sendSessionResultSuccess(Player::seekBack));
+    @Nullable
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      seekBackForControllerInfo(controllerInfo, sequenceNumber);
+    }
+  }
+
+  public void seekBackForControllerInfo(ControllerInfo controllerInfo, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controllerInfo,
+        sequenceNumber,
+        COMMAND_SEEK_BACK,
+        sendSessionResultSuccess(Player::seekBack));
   }
 
   @Override
@@ -801,8 +836,16 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
-    queueSessionTaskWithPlayerCommand(
-        caller,
+    @Nullable
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      seekForwardForControllerInfo(controllerInfo, sequenceNumber);
+    }
+  }
+
+  public void seekForwardForControllerInfo(ControllerInfo controllerInfo, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controllerInfo,
         sequenceNumber,
         COMMAND_SEEK_FORWARD,
         sendSessionResultSuccess(Player::seekForward));
@@ -819,7 +862,7 @@ import java.util.concurrent.ExecutionException;
     }
     SessionCommand command;
     try {
-      command = SessionCommand.CREATOR.fromBundle(commandBundle);
+      command = SessionCommand.fromBundle(commandBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for SessionCommand", e);
       return;
@@ -848,7 +891,7 @@ import java.util.concurrent.ExecutionException;
     }
     Rating rating;
     try {
-      rating = Rating.CREATOR.fromBundle(ratingBundle);
+      rating = Rating.fromBundle(ratingBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for Rating", e);
       return;
@@ -870,7 +913,7 @@ import java.util.concurrent.ExecutionException;
     }
     Rating rating;
     try {
-      rating = Rating.CREATOR.fromBundle(ratingBundle);
+      rating = Rating.fromBundle(ratingBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for Rating", e);
       return;
@@ -902,8 +945,7 @@ import java.util.concurrent.ExecutionException;
     if (caller == null || playbackParametersBundle == null) {
       return;
     }
-    PlaybackParameters playbackParameters =
-        PlaybackParameters.CREATOR.fromBundle(playbackParametersBundle);
+    PlaybackParameters playbackParameters = PlaybackParameters.fromBundle(playbackParametersBundle);
     queueSessionTaskWithPlayerCommand(
         caller,
         sequenceNumber,
@@ -929,7 +971,7 @@ import java.util.concurrent.ExecutionException;
     }
     MediaItem mediaItem;
     try {
-      mediaItem = MediaItem.CREATOR.fromBundle(mediaItemBundle);
+      mediaItem = MediaItem.fromBundle(mediaItemBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -960,7 +1002,7 @@ import java.util.concurrent.ExecutionException;
     }
     MediaItem mediaItem;
     try {
-      mediaItem = MediaItem.CREATOR.fromBundle(mediaItemBundle);
+      mediaItem = MediaItem.fromBundle(mediaItemBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1005,8 +1047,8 @@ import java.util.concurrent.ExecutionException;
     List<MediaItem> mediaItemList;
     try {
       mediaItemList =
-          BundleableUtil.fromBundleList(
-              MediaItem.CREATOR, BundleListRetriever.getList(mediaItemsRetriever));
+          BundleCollectionUtil.fromBundleList(
+              MediaItem::fromBundle, BundleListRetriever.getList(mediaItemsRetriever));
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1043,8 +1085,8 @@ import java.util.concurrent.ExecutionException;
     List<MediaItem> mediaItemList;
     try {
       mediaItemList =
-          BundleableUtil.fromBundleList(
-              MediaItem.CREATOR, BundleListRetriever.getList(mediaItemsRetriever));
+          BundleCollectionUtil.fromBundleList(
+              MediaItem::fromBundle, BundleListRetriever.getList(mediaItemsRetriever));
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1078,7 +1120,7 @@ import java.util.concurrent.ExecutionException;
     }
     MediaMetadata playlistMetadata;
     try {
-      playlistMetadata = MediaMetadata.CREATOR.fromBundle(playlistMetadataBundle);
+      playlistMetadata = MediaMetadata.fromBundle(playlistMetadataBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaMetadata", e);
       return;
@@ -1098,7 +1140,7 @@ import java.util.concurrent.ExecutionException;
     }
     MediaItem mediaItem;
     try {
-      mediaItem = MediaItem.CREATOR.fromBundle(mediaItemBundle);
+      mediaItem = MediaItem.fromBundle(mediaItemBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1123,7 +1165,7 @@ import java.util.concurrent.ExecutionException;
     }
     MediaItem mediaItem;
     try {
-      mediaItem = MediaItem.CREATOR.fromBundle(mediaItemBundle);
+      mediaItem = MediaItem.fromBundle(mediaItemBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1152,8 +1194,8 @@ import java.util.concurrent.ExecutionException;
     List<MediaItem> mediaItems;
     try {
       mediaItems =
-          BundleableUtil.fromBundleList(
-              MediaItem.CREATOR, BundleListRetriever.getList(mediaItemsRetriever));
+          BundleCollectionUtil.fromBundleList(
+              MediaItem::fromBundle, BundleListRetriever.getList(mediaItemsRetriever));
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1181,8 +1223,8 @@ import java.util.concurrent.ExecutionException;
     List<MediaItem> mediaItems;
     try {
       mediaItems =
-          BundleableUtil.fromBundleList(
-              MediaItem.CREATOR, BundleListRetriever.getList(mediaItemsRetriever));
+          BundleCollectionUtil.fromBundleList(
+              MediaItem::fromBundle, BundleListRetriever.getList(mediaItemsRetriever));
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1281,7 +1323,7 @@ import java.util.concurrent.ExecutionException;
     }
     MediaItem mediaItem;
     try {
-      mediaItem = MediaItem.CREATOR.fromBundle(mediaItemBundle);
+      mediaItem = MediaItem.fromBundle(mediaItemBundle);
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1320,8 +1362,8 @@ import java.util.concurrent.ExecutionException;
     ImmutableList<MediaItem> mediaItems;
     try {
       mediaItems =
-          BundleableUtil.fromBundleList(
-              MediaItem.CREATOR, BundleListRetriever.getList(mediaItemsRetriever));
+          BundleCollectionUtil.fromBundleList(
+              MediaItem::fromBundle, BundleListRetriever.getList(mediaItemsRetriever));
     } catch (RuntimeException e) {
       Log.w(TAG, "Ignoring malformed Bundle for MediaItem", e);
       return;
@@ -1370,8 +1412,16 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
-    queueSessionTaskWithPlayerCommand(
-        caller,
+    @Nullable
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      seekToPreviousForControllerInfo(controllerInfo, sequenceNumber);
+    }
+  }
+
+  public void seekToPreviousForControllerInfo(ControllerInfo controllerInfo, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controllerInfo,
         sequenceNumber,
         COMMAND_SEEK_TO_PREVIOUS,
         sendSessionResultSuccess(Player::seekToPrevious));
@@ -1382,8 +1432,19 @@ import java.util.concurrent.ExecutionException;
     if (caller == null) {
       return;
     }
-    queueSessionTaskWithPlayerCommand(
-        caller, sequenceNumber, COMMAND_SEEK_TO_NEXT, sendSessionResultSuccess(Player::seekToNext));
+    @Nullable
+    ControllerInfo controllerInfo = connectedControllersManager.getController(caller.asBinder());
+    if (controllerInfo != null) {
+      seekToNextForControllerInfo(controllerInfo, sequenceNumber);
+    }
+  }
+
+  public void seekToNextForControllerInfo(ControllerInfo controllerInfo, int sequenceNumber) {
+    queueSessionTaskWithPlayerCommandForControllerInfo(
+        controllerInfo,
+        sequenceNumber,
+        COMMAND_SEEK_TO_NEXT,
+        sendSessionResultSuccess(Player::seekToNext));
   }
 
   @Override
@@ -1542,6 +1603,25 @@ import java.util.concurrent.ExecutionException;
   }
 
   @Override
+  public void setAudioAttributes(
+      @Nullable IMediaController caller,
+      int sequenceNumber,
+      Bundle audioAttributes,
+      boolean handleAudioFocus) {
+    if (caller == null) {
+      return;
+    }
+    queueSessionTaskWithPlayerCommand(
+        caller,
+        sequenceNumber,
+        COMMAND_SET_AUDIO_ATTRIBUTES,
+        sendSessionResultSuccess(
+            player ->
+                player.setAudioAttributes(
+                    AudioAttributes.fromBundle(audioAttributes), handleAudioFocus)));
+  }
+
+  @Override
   public void setPlayWhenReady(
       @Nullable IMediaController caller, int sequenceNumber, boolean playWhenReady) {
     if (caller == null) {
@@ -1616,7 +1696,7 @@ import java.util.concurrent.ExecutionException;
     }
     @Nullable
     LibraryParams libraryParams =
-        libraryParamsBundle == null ? null : LibraryParams.CREATOR.fromBundle(libraryParamsBundle);
+        libraryParamsBundle == null ? null : LibraryParams.fromBundle(libraryParamsBundle);
     dispatchSessionTaskWithSessionCommand(
         caller,
         sequenceNumber,
@@ -1672,7 +1752,7 @@ import java.util.concurrent.ExecutionException;
     }
     @Nullable
     LibraryParams libraryParams =
-        libraryParamsBundle == null ? null : LibraryParams.CREATOR.fromBundle(libraryParamsBundle);
+        libraryParamsBundle == null ? null : LibraryParams.fromBundle(libraryParamsBundle);
     dispatchSessionTaskWithSessionCommand(
         caller,
         sequenceNumber,
@@ -1698,7 +1778,7 @@ import java.util.concurrent.ExecutionException;
     }
     @Nullable
     LibraryParams libraryParams =
-        libraryParamsBundle == null ? null : LibraryParams.CREATOR.fromBundle(libraryParamsBundle);
+        libraryParamsBundle == null ? null : LibraryParams.fromBundle(libraryParamsBundle);
     dispatchSessionTaskWithSessionCommand(
         caller,
         sequenceNumber,
@@ -1733,7 +1813,7 @@ import java.util.concurrent.ExecutionException;
     }
     @Nullable
     LibraryParams libraryParams =
-        libraryParamsBundle == null ? null : LibraryParams.CREATOR.fromBundle(libraryParamsBundle);
+        libraryParamsBundle == null ? null : LibraryParams.fromBundle(libraryParamsBundle);
     dispatchSessionTaskWithSessionCommand(
         caller,
         sequenceNumber,
@@ -1759,7 +1839,7 @@ import java.util.concurrent.ExecutionException;
     }
     @Nullable
     LibraryParams libraryParams =
-        libraryParamsBundle == null ? null : LibraryParams.CREATOR.fromBundle(libraryParamsBundle);
+        libraryParamsBundle == null ? null : LibraryParams.fromBundle(libraryParamsBundle);
     dispatchSessionTaskWithSessionCommand(
         caller,
         sequenceNumber,
@@ -1902,16 +1982,25 @@ import java.util.concurrent.ExecutionException;
       boolean bundlingExclusionsTracks =
           excludeTracks || !availableCommands.contains(Player.COMMAND_GET_TRACKS);
       if (controllerInterfaceVersion >= 2) {
+        PlayerInfo filteredPlayerInfo =
+            playerInfo.filterByAvailableCommands(availableCommands, excludeTimeline, excludeTracks);
+        Bundle playerInfoBundle =
+            iController instanceof MediaControllerStub
+                ? filteredPlayerInfo.toBundleInProcess()
+                : filteredPlayerInfo.toBundleForRemoteProcess(controllerInterfaceVersion);
         iController.onPlayerInfoChangedWithExclusions(
             sequenceNumber,
-            playerInfo.toBundle(availableCommands, excludeTimeline, excludeTracks),
+            playerInfoBundle,
             new PlayerInfo.BundlingExclusions(bundlingExclusionsTimeline, bundlingExclusionsTracks)
                 .toBundle());
       } else {
+        PlayerInfo filteredPlayerInfo =
+            playerInfo.filterByAvailableCommands(
+                availableCommands, excludeTimeline, /* excludeTracks= */ true);
         //noinspection deprecation
         iController.onPlayerInfoChanged(
             sequenceNumber,
-            playerInfo.toBundle(availableCommands, excludeTimeline, /* excludeTracks= */ true),
+            filteredPlayerInfo.toBundleForRemoteProcess(controllerInterfaceVersion),
             bundlingExclusionsTimeline);
       }
     }
@@ -1919,7 +2008,8 @@ import java.util.concurrent.ExecutionException;
     @Override
     public void setCustomLayout(int sequenceNumber, List<CommandButton> layout)
         throws RemoteException {
-      iController.onSetCustomLayout(sequenceNumber, BundleableUtil.toBundleList(layout));
+      iController.onSetCustomLayout(
+          sequenceNumber, BundleCollectionUtil.toBundleList(layout, CommandButton::toBundle));
     }
 
     @Override
@@ -1977,11 +2067,14 @@ import java.util.concurrent.ExecutionException;
         int sequenceNumber,
         SessionPositionInfo sessionPositionInfo,
         boolean canAccessCurrentMediaItem,
-        boolean canAccessTimeline)
+        boolean canAccessTimeline,
+        int controllerInterfaceVersion)
         throws RemoteException {
       iController.onPeriodicSessionPositionInfoChanged(
           sequenceNumber,
-          sessionPositionInfo.toBundle(canAccessCurrentMediaItem, canAccessTimeline));
+          sessionPositionInfo
+              .filterByAvailableCommands(canAccessCurrentMediaItem, canAccessTimeline)
+              .toBundle(controllerInterfaceVersion));
     }
 
     @Override

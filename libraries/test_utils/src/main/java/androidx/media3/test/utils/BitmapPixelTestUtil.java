@@ -17,6 +17,8 @@ package androidx.media3.test.utils;
 
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkState;
+import static androidx.media3.common.util.Util.SDK_INT;
+import static androidx.media3.common.util.Util.isRunningOnEmulator;
 import static androidx.test.core.app.ApplicationProvider.getApplicationContext;
 import static com.google.common.truth.Truth.assertThat;
 import static java.lang.Math.abs;
@@ -32,14 +34,12 @@ import android.graphics.PixelFormat;
 import android.media.Image;
 import android.opengl.GLES20;
 import android.opengl.GLES30;
-import android.opengl.GLUtils;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.media3.common.util.GlUtil;
 import androidx.media3.common.util.Log;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
-import com.google.common.base.Ascii;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -48,6 +48,7 @@ import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import org.junit.AssumptionViolatedException;
 
 /** Utilities for pixel tests. */
 // TODO(b/263395272): After the bug is fixed and dependent tests are moved back to media3.effect,
@@ -94,10 +95,7 @@ public class BitmapPixelTestUtil {
    * if running on physical devices.
    */
   public static final float MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE =
-      Ascii.toLowerCase(Util.DEVICE).contains("emulator")
-              || Ascii.toLowerCase(Util.DEVICE).contains("generic")
-          ? 1f
-          : MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_DIFFERENT_DEVICE;
+      isRunningOnEmulator() ? 1f : MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_DIFFERENT_DEVICE;
 
   /**
    * Maximum allowed average pixel difference between bitmaps with 16-bit primaries generated using
@@ -117,18 +115,46 @@ public class BitmapPixelTestUtil {
   public static final float MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_DIFFERENT_DEVICE_FP16 = .01f;
 
   /**
+   * Maximum allowed average pixel difference between bitmaps generated from luma values.
+   *
+   * @see #MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE
+   */
+  public static final float MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_LUMA = 8.0f;
+
+  /**
    * Reads a bitmap from the specified asset location.
    *
    * @param assetString Relative path to the asset within the assets directory.
    * @return A {@link Bitmap}.
    * @throws IOException If the bitmap can't be read.
    */
+  // TODO: b/295523484 - Update all tests using readBitmap to instead use
+  //  readBitmapUnpremultipliedAlpha, and rename readBitmapUnpremultipliedAlpha back to readBitmap.
   public static Bitmap readBitmap(String assetString) throws IOException {
     Bitmap bitmap;
     try (InputStream inputStream = getApplicationContext().getAssets().open(assetString)) {
       bitmap = BitmapFactory.decodeStream(inputStream);
     }
     return bitmap;
+  }
+
+  /**
+   * Reads a bitmap with unpremultiplied alpha from the specified asset location.
+   *
+   * @param assetString Relative path to the asset within the assets directory.
+   * @return A {@link Bitmap}.
+   * @throws IOException If the bitmap can't be read.
+   */
+  @RequiresApi(19) // BitmapFactory.Options#inPremultiplied.
+  public static Bitmap readBitmapUnpremultipliedAlpha(String assetString) throws IOException {
+    Bitmap bitmap;
+    try (InputStream inputStream = getApplicationContext().getAssets().open(assetString)) {
+      // Media3 expected bitmaps are generated from OpenGL, which uses non-premultiplied colors.
+      BitmapFactory.Options bitmapOptions = new BitmapFactory.Options();
+      bitmapOptions.inPremultiplied = false;
+      bitmap = BitmapFactory.decodeStream(inputStream, /* outPadding= */ null, bitmapOptions);
+    }
+    return checkNotNull(bitmap);
   }
 
   /**
@@ -234,6 +260,11 @@ public class BitmapPixelTestUtil {
         int actualColor = actual.getPixel(x, y);
         int expectedColor = expected.getPixel(x, y);
 
+        if (Color.alpha(actualColor) == 0 && Color.alpha(expectedColor) == 0) {
+          // If both colors are transparent, ignore RGB pixel differences for this pixel.
+          differencesBitmap.setPixel(x, y, Color.TRANSPARENT);
+          continue;
+        }
         int alphaDifference = abs(Color.alpha(actualColor) - Color.alpha(expectedColor));
         int redDifference = abs(Color.red(actualColor) - Color.red(expectedColor));
         int blueDifference = abs(Color.blue(actualColor) - Color.blue(expectedColor));
@@ -280,6 +311,10 @@ public class BitmapPixelTestUtil {
         Color actualColor = actual.getColor(x, y);
         Color expectedColor = expected.getColor(x, y);
 
+        if (actualColor.alpha() == 0 && expectedColor.alpha() == 0) {
+          // If both colors are transparent, ignore RGB pixel differences for this pixel.
+          continue;
+        }
         float alphaDifference = abs(actualColor.alpha() - expectedColor.alpha());
         float redDifference = abs(actualColor.red() - expectedColor.red());
         float blueDifference = abs(actualColor.blue() - expectedColor.blue());
@@ -360,8 +395,8 @@ public class BitmapPixelTestUtil {
       Class<?> testStorageClass = Class.forName("androidx.test.services.storage.TestStorage");
       Method method = testStorageClass.getMethod("openOutputFile", String.class);
       Object testStorage = testStorageClass.getDeclaredConstructor().newInstance();
-      OutputStream outputStream = (OutputStream) method.invoke(testStorage, fileName);
-      bitmap.compress(Bitmap.CompressFormat.PNG, /* quality= */ 100, checkNotNull(outputStream));
+      OutputStream outputStream = checkNotNull((OutputStream) method.invoke(testStorage, fileName));
+      bitmap.compress(Bitmap.CompressFormat.PNG, /* quality= */ 100, outputStream);
     } catch (ClassNotFoundException e) {
       // Do nothing
     } catch (Exception e) {
@@ -375,10 +410,20 @@ public class BitmapPixelTestUtil {
    *
    * <p>This method may block until any previously called OpenGL commands are complete.
    *
+   * <p>This method incorrectly marks the output Bitmap as {@link Bitmap#isPremultiplied()
+   * premultiplied}, even though OpenGL typically outputs only non-premultiplied alpha. Use {@link
+   * #createUnpremultipliedArgb8888BitmapFromFocusedGlFramebuffer} to properly handle alpha.
+   *
    * @param width The width of the pixel rectangle to read.
    * @param height The height of the pixel rectangle to read.
    * @return A {@link Bitmap} with the framebuffer's values.
    */
+  // TODO: b/295523484 - Update all tests using createArgb8888BitmapFromFocusedGlFramebuffer to
+  //  instead use createUnpremultipliedArgb8888BitmapFromFocusedGlFramebuffer, and rename
+  //  createUnpremultipliedArgb8888BitmapFromFocusedGlFramebuffer back to
+  //  createArgb8888BitmapFromFocusedGlFramebuffer. Also, apply
+  //  setPremultiplied(false) to createBitmapFromFocusedGlFrameBuffer.
+  @RequiresApi(17) // #flipBitmapVertically.
   public static Bitmap createArgb8888BitmapFromFocusedGlFramebuffer(int width, int height)
       throws GlUtil.GlException {
     return createBitmapFromFocusedGlFrameBuffer(
@@ -386,10 +431,34 @@ public class BitmapPixelTestUtil {
   }
 
   /**
+   * Creates a {@link Bitmap.Config#ARGB_8888} bitmap with the values of the focused OpenGL
+   * framebuffer.
+   *
+   * <p>This method may block until any previously called OpenGL commands are complete.
+   *
+   * @param width The width of the pixel rectangle to read.
+   * @param height The height of the pixel rectangle to read.
+   * @return A {@link Bitmap} with the framebuffer's values.
+   */
+  @RequiresApi(19) // Bitmap#setPremultiplied.
+  public static Bitmap createUnpremultipliedArgb8888BitmapFromFocusedGlFramebuffer(
+      int width, int height) throws GlUtil.GlException {
+    Bitmap bitmap =
+        createBitmapFromFocusedGlFrameBuffer(
+            width, height, /* pixelSize= */ 4, GLES20.GL_UNSIGNED_BYTE, Bitmap.Config.ARGB_8888);
+    bitmap.setPremultiplied(false); // OpenGL represents colors as unpremultiplied.
+    return bitmap;
+  }
+
+  /**
    * Creates a {@link Bitmap.Config#RGBA_F16} bitmap with the values of the focused OpenGL
    * framebuffer.
    *
    * <p>This method may block until any previously called OpenGL commands are complete.
+   *
+   * <p>This method incorrectly marks the output Bitmap as {@link Bitmap#isPremultiplied()
+   * premultiplied}, even though OpenGL typically outputs only non-premultiplied alpha. Call {@link
+   * Bitmap#setPremultiplied} with {@code false} on the output bitmap to properly handle alpha.
    *
    * @param width The width of the pixel rectangle to read.
    * @param height The height of the pixel rectangle to read.
@@ -402,6 +471,7 @@ public class BitmapPixelTestUtil {
         width, height, /* pixelSize= */ 8, GLES30.GL_HALF_FLOAT, Bitmap.Config.RGBA_F16);
   }
 
+  @RequiresApi(17) // #flipBitmapVertically.
   private static Bitmap createBitmapFromFocusedGlFrameBuffer(
       int width, int height, int pixelSize, int glReadPixelsFormat, Bitmap.Config bitmapConfig)
       throws GlUtil.GlException {
@@ -424,29 +494,43 @@ public class BitmapPixelTestUtil {
    * @param bitmap A {@link Bitmap}.
    * @return The identifier of the newly created texture.
    */
+  @RequiresApi(17) // #flipBitmapVertically.
   public static int createGlTextureFromBitmap(Bitmap bitmap) throws GlUtil.GlException {
-    int texId =
-        GlUtil.createTexture(
-            bitmap.getWidth(), bitmap.getHeight(), /* useHighPrecisionColorComponents= */ false);
     // Put the flipped bitmap in the OpenGL texture as the bitmap's positive y-axis points down
     // while OpenGL's positive y-axis points up.
-    GLUtils.texImage2D(
-        GLES20.GL_TEXTURE_2D, /* level= */ 0, flipBitmapVertically(bitmap), /* border= */ 0);
-    GlUtil.checkGlError();
-    return texId;
+    return GlUtil.createTexture(flipBitmapVertically(bitmap));
   }
 
+  @RequiresApi(17) // Bitmap#isPremultiplied.
   public static Bitmap flipBitmapVertically(Bitmap bitmap) {
+    boolean wasPremultiplied = bitmap.isPremultiplied();
+    if (!wasPremultiplied) {
+      if (SDK_INT >= 19) {
+        // Bitmap.createBitmap must be called on a premultiplied bitmap.
+        bitmap.setPremultiplied(true);
+      } else {
+        throw new AssumptionViolatedException(
+            "bitmap is not premultiplied and Bitmap.setPremultiplied is not supported under API 19."
+                + " unpremultiplied bitmaps cannot be flipped");
+      }
+    }
+
     Matrix flip = new Matrix();
     flip.postScale(1f, -1f);
-    return Bitmap.createBitmap(
-        bitmap,
-        /* x= */ 0,
-        /* y= */ 0,
-        bitmap.getWidth(),
-        bitmap.getHeight(),
-        flip,
-        /* filter= */ true);
+
+    Bitmap flippedBitmap =
+        Bitmap.createBitmap(
+            bitmap,
+            /* x= */ 0,
+            /* y= */ 0,
+            bitmap.getWidth(),
+            bitmap.getHeight(),
+            flip,
+            /* filter= */ true);
+    if (SDK_INT >= 19) {
+      flippedBitmap.setPremultiplied(wasPremultiplied);
+    }
+    return flippedBitmap;
   }
 
   private BitmapPixelTestUtil() {}

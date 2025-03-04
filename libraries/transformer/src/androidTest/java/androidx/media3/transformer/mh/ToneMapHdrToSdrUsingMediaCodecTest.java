@@ -26,7 +26,6 @@ import static com.google.common.truth.Truth.assertThat;
 import android.content.Context;
 import android.net.Uri;
 import androidx.media3.common.C;
-import androidx.media3.common.ColorInfo;
 import androidx.media3.common.MediaItem;
 import androidx.media3.transformer.AndroidTestUtil;
 import androidx.media3.transformer.Composition;
@@ -39,7 +38,6 @@ import androidx.media3.transformer.Transformer;
 import androidx.media3.transformer.TransformerAndroidTestRunner;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
-import com.google.common.collect.ImmutableList;
 import java.util.Objects;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -60,10 +58,7 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
         context,
         testId,
         /* inputFormat= */ MP4_ASSET_720P_4_SECOND_HDR10_FORMAT,
-        /* outputFormat= */ MP4_ASSET_720P_4_SECOND_HDR10_FORMAT
-            .buildUpon()
-            .setColorInfo(ColorInfo.SDR_BT709_LIMITED)
-            .build())) {
+        /* outputFormat= */ null)) {
       return;
     }
 
@@ -83,12 +78,11 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
                   }
                 })
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_ASSET_720P_4_SECOND_HDR10));
-    EditedMediaItem editedMediaItem = new EditedMediaItem.Builder(mediaItem).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem));
+    EditedMediaItem editedMediaItem =
+        new EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(MP4_ASSET_720P_4_SECOND_HDR10)))
+            .build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem))
             .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC)
             .build();
 
@@ -122,10 +116,7 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
         context,
         testId,
         /* inputFormat= */ MP4_ASSET_1080P_5_SECOND_HLG10_FORMAT,
-        /* outputFormat= */ MP4_ASSET_1080P_5_SECOND_HLG10_FORMAT
-            .buildUpon()
-            .setColorInfo(ColorInfo.SDR_BT709_LIMITED)
-            .build())) {
+        /* outputFormat= */ null)) {
       return;
     }
 
@@ -145,12 +136,11 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
                   }
                 })
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_ASSET_1080P_5_SECOND_HLG10));
-    EditedMediaItem editedMediaItem = new EditedMediaItem.Builder(mediaItem).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem));
+    EditedMediaItem editedMediaItem =
+        new EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(MP4_ASSET_1080P_5_SECOND_HLG10)))
+            .build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem))
             .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC)
             .build();
 
@@ -184,10 +174,7 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
         context,
         testId,
         /* inputFormat= */ MP4_ASSET_720P_4_SECOND_HDR10_FORMAT,
-        /* outputFormat= */ MP4_ASSET_720P_4_SECOND_HDR10_FORMAT
-            .buildUpon()
-            .setColorInfo(ColorInfo.SDR_BT709_LIMITED)
-            .build())) {
+        /* outputFormat= */ null)) {
       return;
     }
 
@@ -207,13 +194,12 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
                   }
                 })
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_ASSET_720P_4_SECOND_HDR10));
     EditedMediaItem editedMediaItem =
-        new EditedMediaItem.Builder(mediaItem).setEffects(FORCE_TRANSCODE_VIDEO_EFFECTS).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem));
+        new EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(MP4_ASSET_720P_4_SECOND_HDR10)))
+            .setEffects(FORCE_TRANSCODE_VIDEO_EFFECTS)
+            .build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem))
             .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC)
             .build();
 
@@ -247,10 +233,7 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
         context,
         testId,
         /* inputFormat= */ MP4_ASSET_1080P_5_SECOND_HLG10_FORMAT,
-        /* outputFormat= */ MP4_ASSET_1080P_5_SECOND_HLG10_FORMAT
-            .buildUpon()
-            .setColorInfo(ColorInfo.SDR_BT709_LIMITED)
-            .build())) {
+        /* outputFormat= */ null)) {
       return;
     }
 
@@ -270,13 +253,12 @@ public class ToneMapHdrToSdrUsingMediaCodecTest {
                   }
                 })
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_ASSET_1080P_5_SECOND_HLG10));
     EditedMediaItem editedMediaItem =
-        new EditedMediaItem.Builder(mediaItem).setEffects(FORCE_TRANSCODE_VIDEO_EFFECTS).build();
-    EditedMediaItemSequence sequence =
-        new EditedMediaItemSequence(ImmutableList.of(editedMediaItem));
+        new EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(MP4_ASSET_1080P_5_SECOND_HLG10)))
+            .setEffects(FORCE_TRANSCODE_VIDEO_EFFECTS)
+            .build();
     Composition composition =
-        new Composition.Builder(ImmutableList.of(sequence))
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem))
             .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC)
             .build();
 

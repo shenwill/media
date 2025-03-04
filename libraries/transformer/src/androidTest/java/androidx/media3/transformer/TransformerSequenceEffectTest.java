@@ -18,6 +18,8 @@
 package androidx.media3.transformer;
 
 import static androidx.media3.common.util.Assertions.checkNotNull;
+import static androidx.media3.common.util.Util.SDK_INT;
+import static androidx.media3.test.utils.BitmapPixelTestUtil.MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_LUMA;
 import static androidx.media3.test.utils.BitmapPixelTestUtil.getBitmapAveragePixelAbsoluteDifferenceArgb8888;
 import static androidx.media3.test.utils.BitmapPixelTestUtil.maybeSaveTestBitmap;
 import static androidx.media3.test.utils.BitmapPixelTestUtil.readBitmap;
@@ -26,11 +28,13 @@ import static androidx.media3.transformer.AndroidTestUtil.JPG_PORTRAIT_ASSET_URI
 import static androidx.media3.transformer.AndroidTestUtil.MP4_ASSET_FORMAT;
 import static androidx.media3.transformer.AndroidTestUtil.MP4_ASSET_URI_STRING;
 import static androidx.media3.transformer.AndroidTestUtil.MP4_PORTRAIT_ASSET_URI_STRING;
+import static androidx.media3.transformer.AndroidTestUtil.extractBitmapsFromVideo;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static org.junit.Assume.assumeFalse;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.media.Image;
 import androidx.annotation.Nullable;
 import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
@@ -40,10 +44,9 @@ import androidx.media3.effect.OverlayEffect;
 import androidx.media3.effect.Presentation;
 import androidx.media3.effect.RgbFilter;
 import androidx.media3.effect.ScaleAndRotateTransformation;
-import androidx.media3.test.utils.BitmapPixelTestUtil;
-import androidx.media3.test.utils.VideoDecodingWrapper;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import com.google.common.base.Ascii;
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 import java.util.List;
@@ -62,13 +65,6 @@ public final class TransformerSequenceEffectTest {
   private static final String OVERLAY_PNG_ASSET_PATH = "media/bitmap/input_images/media3test.png";
   private static final int EXPORT_WIDTH = 360;
   private static final int EXPORT_HEIGHT = 240;
-
-  /**
-   * Maximum allowed average pixel difference between bitmaps generated from luma values.
-   *
-   * @see BitmapPixelTestUtil#MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE
-   */
-  private static final float MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_LUMA = 8.0f;
 
   private final Context context = ApplicationProvider.getApplicationContext();
 
@@ -119,6 +115,15 @@ public final class TransformerSequenceEffectTest {
   @Test
   public void export_withCompositionPresentationAndWithPerMediaItemEffects() throws Exception {
     String testId = "export_withCompositionPresentationAndWithPerMediaItemEffects";
+
+    // Reference: b/296225823#comment5
+    assumeFalse(
+        "Some older MediaTek encoders have a pixel alignment of 16, which results in a 360 pixel"
+            + " width being re-scaled to 368.",
+        SDK_INT == 27
+            && (Ascii.equalsIgnoreCase(Util.MODEL, "redmi 6a")
+                || Ascii.equalsIgnoreCase(Util.MODEL, "vivo 1820")));
+
     if (AndroidTestUtil.skipAndLogIfFormatsUnsupported(
         context,
         testId,
@@ -219,10 +224,11 @@ public final class TransformerSequenceEffectTest {
   }
 
   private static Composition createComposition(
-      @Nullable Presentation presentation, EditedMediaItem... editedMediaItems) {
+      @Nullable Presentation presentation,
+      EditedMediaItem editedMediaItem,
+      EditedMediaItem... editedMediaItems) {
     Composition.Builder builder =
-        new Composition.Builder(
-            ImmutableList.of(new EditedMediaItemSequence(ImmutableList.copyOf(editedMediaItems))));
+        new Composition.Builder(new EditedMediaItemSequence(editedMediaItem, editedMediaItems));
     if (presentation != null) {
       builder.setEffects(
           new Effects(/* audioProcessors= */ ImmutableList.of(), ImmutableList.of(presentation)));
@@ -256,24 +262,6 @@ public final class TransformerSequenceEffectTest {
         .build();
   }
 
-  private static ImmutableList<Bitmap> extractBitmapsFromVideo(Context context, String filePath)
-      throws IOException, InterruptedException {
-    ImmutableList.Builder<Bitmap> bitmaps = new ImmutableList.Builder<>();
-    try (VideoDecodingWrapper decodingWrapper =
-        new VideoDecodingWrapper(
-            context, filePath, /* comparisonInterval= */ 1, /* maxImagesAllowed= */ 1)) {
-      while (true) {
-        @Nullable Image image = decodingWrapper.runUntilComparisonFrameOrEnded();
-        if (image == null) {
-          break;
-        }
-        bitmaps.add(BitmapPixelTestUtil.createGrayscaleArgb8888BitmapFromYuv420888Image(image));
-        image.close();
-      }
-    }
-    return bitmaps.build();
-  }
-
   private static void assertBitmapsMatchExpected(List<Bitmap> actualBitmaps, String testId)
       throws IOException {
     for (int i = 0; i < actualBitmaps.size(); i++) {
@@ -286,7 +274,8 @@ public final class TransformerSequenceEffectTest {
           testId, /* bitmapLabel= */ String.valueOf(i), actualBitmap, /* path= */ null);
       float averagePixelAbsoluteDifference =
           getBitmapAveragePixelAbsoluteDifferenceArgb8888(expectedBitmap, actualBitmap, subTestId);
-      assertThat(averagePixelAbsoluteDifference)
+      assertWithMessage("For expected bitmap %s.png", subTestId)
+          .that(averagePixelAbsoluteDifference)
           .isAtMost(MAXIMUM_AVERAGE_PIXEL_ABSOLUTE_DIFFERENCE_LUMA);
     }
   }

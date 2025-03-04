@@ -22,6 +22,7 @@ import android.graphics.Bitmap;
 import android.os.Looper;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.util.TimestampIterator;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.time.Duration;
@@ -126,8 +127,9 @@ public class ImageAssetLoaderTest {
   private static final class FakeSampleConsumer implements SampleConsumer {
 
     @Override
-    public boolean queueInputBitmap(Bitmap inputBitmap, long durationUs, int frameRate) {
-      return true;
+    public @InputResult int queueInputBitmap(
+        Bitmap inputBitmap, TimestampIterator inStreamOffsetsUs) {
+      return INPUT_RESULT_SUCCESS;
     }
 
     @Override

@@ -173,8 +173,15 @@ public class ForwardingAudioSink implements AudioSink {
   }
 
   @Override
+  @RequiresApi(29)
   public void setOffloadMode(@OffloadMode int offloadMode) {
     sink.setOffloadMode(offloadMode);
+  }
+
+  @Override
+  @RequiresApi(29)
+  public void setOffloadDelayPadding(int delayInFrames, int paddingInFrames) {
+    sink.setOffloadDelayPadding(delayInFrames, paddingInFrames);
   }
 
   @Override
@@ -190,11 +197,6 @@ public class ForwardingAudioSink implements AudioSink {
   @Override
   public void flush() {
     sink.flush();
-  }
-
-  @Override
-  public void experimentalFlushWithoutAudioTrackRelease() {
-    sink.experimentalFlushWithoutAudioTrackRelease();
   }
 
   @Override

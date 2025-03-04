@@ -23,6 +23,7 @@ import androidx.annotation.IntDef;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.effect.VideoCompositorSettings;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.lang.annotation.Documented;
@@ -42,8 +43,8 @@ public final class Composition {
   /** A builder for {@link Composition} instances. */
   public static final class Builder {
 
-    private final ImmutableList<EditedMediaItemSequence> sequences;
-
+    private ImmutableList<EditedMediaItemSequence> sequences;
+    private VideoCompositorSettings videoCompositorSettings;
     private Effects effects;
     private boolean forceAudioTrack;
     private boolean transmuxAudio;
@@ -53,22 +54,62 @@ public final class Composition {
     /**
      * Creates an instance.
      *
-     * @param sequences The {@link EditedMediaItemSequence} instances to compose. {@link MediaItem}
-     *     instances from different sequences that are overlapping in time will be mixed in the
-     *     output. This list must not be empty.
+     * @see Builder#Builder(List)
+     */
+    public Builder(EditedMediaItemSequence sequence, EditedMediaItemSequence... sequences) {
+      this(
+          new ImmutableList.Builder<EditedMediaItemSequence>()
+              .add(sequence)
+              .add(sequences)
+              .build());
+    }
+
+    /**
+     * Creates an instance.
+     *
+     * @param sequences The {@link EditedMediaItemSequence} instances to compose. The list must be
+     *     non empty. See {@link Composition#sequences} for more details.
      */
     public Builder(List<EditedMediaItemSequence> sequences) {
       checkArgument(
           !sequences.isEmpty(),
           "The composition must contain at least one EditedMediaItemSequence.");
       this.sequences = ImmutableList.copyOf(sequences);
+      videoCompositorSettings = VideoCompositorSettings.DEFAULT;
       effects = Effects.EMPTY;
+    }
+
+    /** Creates a new instance to build upon the provided {@link Composition}. */
+    private Builder(Composition composition) {
+      sequences = composition.sequences;
+      videoCompositorSettings = composition.videoCompositorSettings;
+      effects = composition.effects;
+      forceAudioTrack = composition.forceAudioTrack;
+      transmuxAudio = composition.transmuxAudio;
+      transmuxVideo = composition.transmuxVideo;
+      hdrMode = composition.hdrMode;
+    }
+
+    /**
+     * Sets the {@link VideoCompositorSettings} to apply to the {@link Composition}.
+     *
+     * <p>The default value is {@link VideoCompositorSettings#DEFAULT}.
+     *
+     * @param videoCompositorSettings The {@link VideoCompositorSettings}.
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setVideoCompositorSettings(VideoCompositorSettings videoCompositorSettings) {
+      this.videoCompositorSettings = videoCompositorSettings;
+      return this;
     }
 
     /**
      * Sets the {@link Effects} to apply to the {@link Composition}.
      *
      * <p>The default value is {@link Effects#EMPTY}.
+     *
+     * <p>This only works with the {@code Presentation} effect.
      *
      * @param effects The {@link Composition} {@link Effects}.
      * @return This builder.
@@ -175,7 +216,7 @@ public final class Composition {
      *
      * <p>The default value is {@link #HDR_MODE_KEEP_HDR}. Apps that need to tone-map HDR to SDR
      * should generally prefer {@link #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL} over {@link
-     * HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC}, because its behavior is likely to be more
+     * #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC}, because its behavior is likely to be more
      * consistent across devices.
      *
      * @param hdrMode The {@link HdrMode} used.
@@ -190,7 +231,29 @@ public final class Composition {
     /** Builds a {@link Composition} instance. */
     public Composition build() {
       return new Composition(
-          sequences, effects, forceAudioTrack, transmuxAudio, transmuxVideo, hdrMode);
+          sequences,
+          videoCompositorSettings,
+          effects,
+          forceAudioTrack,
+          transmuxAudio,
+          transmuxVideo,
+          hdrMode);
+    }
+
+    /**
+     * Sets {@link Composition#sequences}.
+     *
+     * @param sequences The {@link EditedMediaItemSequence} instances to compose. The list must not
+     *     be empty.
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    /* package */ Builder setSequences(List<EditedMediaItemSequence> sequences) {
+      checkArgument(
+          !sequences.isEmpty(),
+          "The composition must contain at least one EditedMediaItemSequence.");
+      this.sequences = ImmutableList.copyOf(sequences);
+      return this;
     }
   }
 
@@ -222,7 +285,7 @@ public final class Composition {
    * <p>Supported on API 31+, by some device and HDR format combinations.
    *
    * <p>If not supported, {@link Transformer} will attempt to use {@link
-   * #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC}.
+   * #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL}.
    */
   public static final int HDR_MODE_KEEP_HDR = 0;
 
@@ -255,10 +318,10 @@ public final class Composition {
   /**
    * Interpret HDR input as SDR, likely with a washed out look.
    *
-   * <p>This is much more widely supported than {@link #HDR_MODE_KEEP_HDR} and {@link
-   * #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC}. However, as HDR transfer functions and
-   * metadata will be ignored, contents will be displayed incorrectly, likely with a washed out
-   * look.
+   * <p>This is much more widely supported than {@link #HDR_MODE_KEEP_HDR}, {@link
+   * #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC}, and {@link
+   * #HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL}. However, as HDR transfer functions and metadata
+   * will be ignored, contents will be displayed incorrectly, likely with a washed out look.
    *
    * <p>Using this API may lead to codec errors before API 29.
    *
@@ -271,9 +334,13 @@ public final class Composition {
   /**
    * The {@link EditedMediaItemSequence} instances to compose.
    *
-   * <p>For more information, see {@link Builder#Builder(List)}.
+   * <p>{@link MediaItem} instances from different sequences that are overlapping in time will be
+   * mixed in the output.
    */
   public final ImmutableList<EditedMediaItemSequence> sequences;
+
+  /** The {@link VideoCompositorSettings} to apply to the composition. */
+  public final VideoCompositorSettings videoCompositorSettings;
 
   /** The {@link Effects} to apply to the composition. */
   public final Effects effects;
@@ -306,8 +373,14 @@ public final class Composition {
    */
   public final @HdrMode int hdrMode;
 
+  /** Returns a {@link Composition.Builder} initialized with the values of this instance. */
+  /* package */ Builder buildUpon() {
+    return new Builder(this);
+  }
+
   private Composition(
       List<EditedMediaItemSequence> sequences,
+      VideoCompositorSettings videoCompositorSettings,
       Effects effects,
       boolean forceAudioTrack,
       boolean transmuxAudio,
@@ -317,6 +390,7 @@ public final class Composition {
         !transmuxAudio || !forceAudioTrack,
         "Audio transmuxing and audio track forcing are not allowed together.");
     this.sequences = ImmutableList.copyOf(sequences);
+    this.videoCompositorSettings = videoCompositorSettings;
     this.effects = effects;
     this.transmuxAudio = transmuxAudio;
     this.transmuxVideo = transmuxVideo;

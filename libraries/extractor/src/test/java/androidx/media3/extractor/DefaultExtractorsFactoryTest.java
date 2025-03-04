@@ -22,8 +22,10 @@ import android.net.Uri;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.extractor.amr.AmrExtractor;
 import androidx.media3.extractor.avi.AviExtractor;
+import androidx.media3.extractor.bmp.BmpExtractor;
 import androidx.media3.extractor.flac.FlacExtractor;
 import androidx.media3.extractor.flv.FlvExtractor;
+import androidx.media3.extractor.heif.HeifExtractor;
 import androidx.media3.extractor.jpeg.JpegExtractor;
 import androidx.media3.extractor.mkv.MatroskaExtractor;
 import androidx.media3.extractor.mp3.Mp3Extractor;
@@ -38,6 +40,7 @@ import androidx.media3.extractor.ts.AdtsExtractor;
 import androidx.media3.extractor.ts.PsExtractor;
 import androidx.media3.extractor.ts.TsExtractor;
 import androidx.media3.extractor.wav.WavExtractor;
+import androidx.media3.extractor.webp.WebpExtractor;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -76,14 +79,17 @@ public final class DefaultExtractorsFactoryTest {
             Mp3Extractor.class,
             AviExtractor.class,
             JpegExtractor.class,
-            PngExtractor.class)
+            PngExtractor.class,
+            WebpExtractor.class,
+            BmpExtractor.class,
+            HeifExtractor.class)
         .inOrder();
   }
 
   @Test
   public void createExtractors_withMediaInfo_startsWithExtractorsMatchingHeadersAndThenUri() {
     DefaultExtractorsFactory defaultExtractorsFactory = new DefaultExtractorsFactory();
-    Uri uri = Uri.parse("test.mp3");
+    Uri uri = Uri.parse("test-cbr-info-header.mp3");
     Map<String, List<String>> responseHeaders = new HashMap<>();
     responseHeaders.put("Content-Type", Collections.singletonList(MimeTypes.VIDEO_MP4));
 
@@ -98,7 +104,7 @@ public final class DefaultExtractorsFactoryTest {
   @Test
   public void createExtractors_withMediaInfo_optimizesSniffingOrder() {
     DefaultExtractorsFactory defaultExtractorsFactory = new DefaultExtractorsFactory();
-    Uri uri = Uri.parse("test.mp3");
+    Uri uri = Uri.parse("test-cbr-info-header.mp3");
     Map<String, List<String>> responseHeaders = new HashMap<>();
     responseHeaders.put("Content-Type", Collections.singletonList(MimeTypes.VIDEO_MP4));
 
@@ -120,7 +126,10 @@ public final class DefaultExtractorsFactoryTest {
             Ac4Extractor.class,
             AviExtractor.class,
             JpegExtractor.class,
-            PngExtractor.class)
+            PngExtractor.class,
+            WebpExtractor.class,
+            BmpExtractor.class,
+            HeifExtractor.class)
         .inOrder();
   }
 

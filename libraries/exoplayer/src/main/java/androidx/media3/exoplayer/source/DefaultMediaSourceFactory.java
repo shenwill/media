@@ -18,6 +18,7 @@ package androidx.media3.exoplayer.source;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkStateNotNull;
 import static androidx.media3.common.util.Util.castNonNull;
+import static androidx.media3.common.util.Util.msToUs;
 
 import android.content.Context;
 import android.net.Uri;
@@ -48,6 +49,7 @@ import androidx.media3.extractor.ExtractorsFactory;
 import androidx.media3.extractor.PositionHolder;
 import androidx.media3.extractor.SeekMap;
 import androidx.media3.extractor.TrackOutput;
+import androidx.media3.extractor.jpeg.JpegExtractor;
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory;
 import androidx.media3.extractor.text.SubtitleExtractor;
 import com.google.common.base.Supplier;
@@ -59,6 +61,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
@@ -113,6 +116,7 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
 
   private DataSource.Factory dataSourceFactory;
   @Nullable private MediaSource.Factory serverSideAdInsertionMediaSourceFactory;
+  @Nullable private ExternalLoader externalImageLoader;
   @Nullable private AdsLoader.Provider adsLoaderProvider;
   @Nullable private AdViewProvider adViewProvider;
   @Nullable private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
@@ -121,7 +125,7 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
   private long liveMaxOffsetMs;
   private float liveMinSpeed;
   private float liveMaxSpeed;
-  private boolean useProgressiveMediaSourceForSubtitles;
+  private boolean parseSubtitlesDuringExtraction;
 
   /**
    * Creates a new instance.
@@ -187,21 +191,18 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
   }
 
   /**
-   * Sets whether a {@link ProgressiveMediaSource} or {@link SingleSampleMediaSource} is constructed
-   * to handle {@link MediaItem.LocalConfiguration#subtitleConfigurations}. Defaults to false (i.e.
-   * {@link SingleSampleMediaSource}.
+   * {@inheritDoc}
    *
-   * <p>This method is experimental, and will be renamed or removed in a future release.
-   *
-   * @param useProgressiveMediaSourceForSubtitles Indicates that {@link ProgressiveMediaSource}
-   *     should be used for subtitles instead of {@link SingleSampleMediaSource}.
-   * @return This factory, for convenience.
+   * <p>The current limitation is that this method will have no effect when progressive media with
+   * muxed subtitles is {@linkplain #createMediaSource created}.
    */
   @CanIgnoreReturnValue
   @UnstableApi
-  public DefaultMediaSourceFactory experimentalUseProgressiveMediaSourceForSubtitles(
-      boolean useProgressiveMediaSourceForSubtitles) {
-    this.useProgressiveMediaSourceForSubtitles = useProgressiveMediaSourceForSubtitles;
+  @Override
+  public DefaultMediaSourceFactory experimentalParseSubtitlesDuringExtraction(
+      boolean parseSubtitlesDuringExtraction) {
+    this.parseSubtitlesDuringExtraction = parseSubtitlesDuringExtraction;
+    delegateFactoryLoader.setParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction);
     return this;
   }
 
@@ -309,6 +310,26 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
   public DefaultMediaSourceFactory setServerSideAdInsertionMediaSourceFactory(
       @Nullable MediaSource.Factory serverSideAdInsertionMediaSourceFactory) {
     this.serverSideAdInsertionMediaSourceFactory = serverSideAdInsertionMediaSourceFactory;
+    return this;
+  }
+
+  /**
+   * Sets the {@link ExternalLoader} to be called when loading starts in {@link
+   * ExternallyLoadedMediaSource} when loading images in an external Image Management Framework (for
+   * example, Glide).
+   *
+   * <p>This loader is only used when the {@link MediaItem.LocalConfiguration#mimeType} is set to
+   * {@link MimeTypes#APPLICATION_EXTERNALLY_LOADED_IMAGE}.
+   *
+   * @param externalImageLoader The {@link ExternalLoader} to load the media or {@code null} to
+   *     remove a previously set {@link ExternalLoader}.
+   * @return This factory, for convenience.
+   */
+  @CanIgnoreReturnValue
+  @UnstableApi
+  public DefaultMediaSourceFactory setExternalImageLoader(
+      @Nullable ExternalLoader externalImageLoader) {
+    this.externalImageLoader = externalImageLoader;
     return this;
   }
 
@@ -434,10 +455,20 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
     if (scheme != null && scheme.equals(C.SSAI_SCHEME)) {
       return checkNotNull(serverSideAdInsertionMediaSourceFactory).createMediaSource(mediaItem);
     }
+    if (Objects.equals(
+        mediaItem.localConfiguration.mimeType, MimeTypes.APPLICATION_EXTERNALLY_LOADED_IMAGE)) {
+      return new ExternallyLoadedMediaSource.Factory(
+              msToUs(mediaItem.localConfiguration.imageDurationMs),
+              checkNotNull(externalImageLoader))
+          .createMediaSource(mediaItem);
+    }
     @C.ContentType
     int type =
         Util.inferContentTypeForUriAndMimeType(
             mediaItem.localConfiguration.uri, mediaItem.localConfiguration.mimeType);
+    if (mediaItem.localConfiguration.imageDurationMs != C.TIME_UNSET) {
+      delegateFactoryLoader.setJpegExtractorFlags(JpegExtractor.FLAG_READ_IMAGE);
+    }
     @Nullable
     MediaSource.Factory mediaSourceFactory = delegateFactoryLoader.getMediaSourceFactory(type);
     checkStateNotNull(
@@ -474,7 +505,7 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
       MediaSource[] mediaSources = new MediaSource[subtitleConfigurations.size() + 1];
       mediaSources[0] = mediaSource;
       for (int i = 0; i < subtitleConfigurations.size(); i++) {
-        if (useProgressiveMediaSourceForSubtitles) {
+        if (parseSubtitlesDuringExtraction) {
           Format format =
               new Format.Builder()
                   .setSampleMimeType(subtitleConfigurations.get(i).mimeType)
@@ -520,15 +551,15 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
   // internal methods
 
   private static MediaSource maybeClipMediaSource(MediaItem mediaItem, MediaSource mediaSource) {
-    if (mediaItem.clippingConfiguration.startPositionMs == 0
-        && mediaItem.clippingConfiguration.endPositionMs == C.TIME_END_OF_SOURCE
+    if (mediaItem.clippingConfiguration.startPositionUs == 0
+        && mediaItem.clippingConfiguration.endPositionUs == C.TIME_END_OF_SOURCE
         && !mediaItem.clippingConfiguration.relativeToDefaultPosition) {
       return mediaSource;
     }
     return new ClippingMediaSource(
         mediaSource,
-        Util.msToUs(mediaItem.clippingConfiguration.startPositionMs),
-        Util.msToUs(mediaItem.clippingConfiguration.endPositionMs),
+        mediaItem.clippingConfiguration.startPositionUs,
+        mediaItem.clippingConfiguration.endPositionUs,
         /* enableInitialDiscontinuity= */ !mediaItem.clippingConfiguration.startsAtKeyFrame,
         /* allowDynamicClippingUpdates= */ mediaItem.clippingConfiguration.relativeToLiveWindow,
         mediaItem.clippingConfiguration.relativeToDefaultPosition);
@@ -576,6 +607,7 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
     private final Map<Integer, MediaSource.Factory> mediaSourceFactories;
 
     private DataSource.@MonotonicNonNull Factory dataSourceFactory;
+    private boolean parseSubtitlesDuringExtraction;
     @Nullable private CmcdConfiguration.Factory cmcdConfigurationFactory;
     @Nullable private DrmSessionManagerProvider drmSessionManagerProvider;
     @Nullable private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
@@ -615,6 +647,7 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
       if (loadErrorHandlingPolicy != null) {
         mediaSourceFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy);
       }
+      mediaSourceFactory.experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction);
       mediaSourceFactories.put(contentType, mediaSourceFactory);
       return mediaSourceFactory;
     }
@@ -626,6 +659,14 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
         // exists on the interface.
         mediaSourceFactorySuppliers.clear();
         mediaSourceFactories.clear();
+      }
+    }
+
+    public void setParseSubtitlesDuringExtraction(boolean parseSubtitlesDuringExtraction) {
+      this.parseSubtitlesDuringExtraction = parseSubtitlesDuringExtraction;
+      for (MediaSource.Factory mediaSourceFactory : mediaSourceFactories.values()) {
+        mediaSourceFactory.experimentalParseSubtitlesDuringExtraction(
+            parseSubtitlesDuringExtraction);
       }
     }
 
@@ -647,6 +688,12 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
       this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
       for (MediaSource.Factory mediaSourceFactory : mediaSourceFactories.values()) {
         mediaSourceFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy);
+      }
+    }
+
+    public void setJpegExtractorFlags(@JpegExtractor.Flags int flags) {
+      if (this.extractorsFactory instanceof DefaultExtractorsFactory) {
+        ((DefaultExtractorsFactory) this.extractorsFactory).setJpegExtractorFlags(flags);
       }
     }
 
@@ -694,6 +741,7 @@ public final class DefaultMediaSourceFactory implements MediaSourceFactory {
             mediaSourceFactorySupplier = () -> newInstance(clazz);
             break;
           case C.CONTENT_TYPE_OTHER:
+            // TODO(181312195): potential setter on Default/ExtractorsFactory for subtitles
             mediaSourceFactorySupplier =
                 () -> new ProgressiveMediaSource.Factory(dataSourceFactory, extractorsFactory);
             break;

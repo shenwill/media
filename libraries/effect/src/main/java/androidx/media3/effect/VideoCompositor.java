@@ -15,25 +15,29 @@
  */
 package androidx.media3.effect;
 
+import androidx.media3.common.ColorInfo;
 import androidx.media3.common.GlTextureInfo;
 import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.common.util.UnstableApi;
 
 /**
- * Interface for a video compositor that combines frames from mutliple input sources to produce
+ * Interface for a video compositor that combines frames from multiple input sources to produce
  * output frames.
  *
  * <p>Input and output are provided via OpenGL textures.
+ *
+ * <p>Methods may be called from any thread.
  */
 @UnstableApi
-public interface VideoCompositor {
+public interface VideoCompositor extends GlTextureProducer {
 
   /** Listener for errors. */
   interface Listener {
     /**
      * Called when an exception occurs during asynchronous frame compositing.
      *
-     * <p>Using {@link VideoCompositor} after an error happens is undefined behavior.
+     * <p>If this is called, the calling {@link VideoCompositor} must immediately be {@linkplain
+     * VideoCompositor#release() released}.
      */
     void onError(VideoFrameProcessingException exception);
 
@@ -48,27 +52,32 @@ public interface VideoCompositor {
   int registerInputSource();
 
   /**
-   * Signals that no more frames will come from the upstream {@link
-   * DefaultVideoFrameProcessor.TextureOutputListener}.
+   * Signals that no more frames will come from the upstream {@link GlTextureProducer.Listener}.
    *
-   * <p>Each input source must have a unique {@code inputId} returned from {@link
-   * #registerInputSource}.
+   * @param inputId The identifier for an input source, returned from {@link #registerInputSource}.
    */
   void signalEndOfInputSource(int inputId);
 
   /**
-   * Queues an input texture to be composited, for example from an upstream {@link
-   * DefaultVideoFrameProcessor.TextureOutputListener}.
+   * Queues an input texture to be composited.
    *
-   * <p>Each input source must have a unique {@code inputId} returned from {@link
-   * #registerInputSource}.
+   * @param inputId The identifier for an input source, returned from {@link #registerInputSource}.
+   * @param textureProducer The source from where the {@code inputTexture} is produced.
+   * @param inputTexture The {@link GlTextureInfo} to composite.
+   * @param colorInfo The {@link ColorInfo} of {@code inputTexture}.
+   * @param presentationTimeUs The presentation time of {@code inputTexture}, in microseconds.
    */
   void queueInputTexture(
       int inputId,
+      GlTextureProducer textureProducer,
       GlTextureInfo inputTexture,
-      long presentationTimeUs,
-      DefaultVideoFrameProcessor.ReleaseOutputTextureCallback releaseTextureCallback);
+      ColorInfo colorInfo,
+      long presentationTimeUs);
 
-  /** Releases all resources. */
+  /**
+   * Releases all resources.
+   *
+   * <p>This {@link VideoCompositor} instance must not be used after this method is called.
+   */
   void release();
 }

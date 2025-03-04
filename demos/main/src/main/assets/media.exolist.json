@@ -144,6 +144,12 @@
         "drm_license_uri": "https://proxy.uat.widevine.com/proxy?video_id=GTS_HW_SECURE_ALL&provider=widevine_test"
       },
       {
+        "name": "20s license with renewal",
+        "uri": "https://storage.googleapis.com/wvmedia/cenc/h264/tears/tears.mpd",
+        "drm_scheme": "widevine",
+        "drm_license_uri": "https://proxy.uat.widevine.com/proxy?video_id=GTS_CAN_RENEW&provider=widevine_test"
+      },
+      {
         "name": "30s license (fails at ~30s)",
         "uri": "https://storage.googleapis.com/wvmedia/cenc/h264/tears/tears.mpd",
         "drm_scheme": "widevine",
@@ -469,6 +475,34 @@
           },
           {
             "uri": "ssai://dai.google.com/?contentSourceId=2559737&videoId=tos-dash&format=0&adsId=1"
+          },
+          {
+            "uri": "https://html5demos.com/assets/dizzy.mp4"
+          }
+        ]
+      },
+      {
+        "name": "Playlist: No ads - DASH live: Tears of Steel (mid) - No ads",
+        "playlist": [
+          {
+            "uri": "https://html5demos.com/assets/dizzy.mp4"
+          },
+          {
+            "uri": "ssai://dai.google.com/?assetKey=PSzZMzAkSXCmlJOWDmRj8Q&format=0&adsId=1"
+          },
+          {
+            "uri": "https://html5demos.com/assets/dizzy.mp4"
+          }
+        ]
+      },
+      {
+        "name": "Playlist: No ads - HLS live: Big Buck Bunny - No ads",
+        "playlist": [
+          {
+            "uri": "https://html5demos.com/assets/dizzy.mp4"
+          },
+          {
+            "uri": "ssai://dai.google.com/?assetKey=sN_IYUG8STe1ZzhIIE_ksA&format=2&adsId=3"
           },
           {
             "uri": "https://html5demos.com/assets/dizzy.mp4"

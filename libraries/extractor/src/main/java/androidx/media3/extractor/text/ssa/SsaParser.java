@@ -15,7 +15,6 @@
  */
 package androidx.media3.extractor.text.ssa;
 
-import static androidx.media3.common.text.Cue.DIMEN_UNSET;
 import static androidx.media3.common.text.Cue.LINE_TYPE_FRACTION;
 import static androidx.media3.common.util.Util.castNonNull;
 
@@ -29,8 +28,11 @@ import android.text.style.StyleSpan;
 import android.text.style.UnderlineSpan;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
+import androidx.media3.common.Format.CueReplacementBehavior;
 import androidx.media3.common.text.Cue;
 import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.Consumer;
 import androidx.media3.common.util.Log;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
@@ -39,7 +41,6 @@ import androidx.media3.extractor.text.CuesWithTiming;
 import androidx.media3.extractor.text.SubtitleParser;
 import com.google.common.base.Ascii;
 import com.google.common.base.Charsets;
-import com.google.common.collect.ImmutableList;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -54,6 +55,13 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 /** A {@link SubtitleParser} for SSA/ASS. */
 @UnstableApi
 public final class SsaParser implements SubtitleParser {
+
+  /**
+   * The {@link CueReplacementBehavior} for consecutive {@link CuesWithTiming} emitted by this
+   * implementation.
+   */
+  public static final @CueReplacementBehavior int CUE_REPLACEMENT_BEHAVIOR =
+      Format.CUE_REPLACEMENT_BEHAVIOR_MERGE;
 
   private static final String TAG = "SsaParser";
 
@@ -104,8 +112,8 @@ public final class SsaParser implements SubtitleParser {
    */
   public SsaParser(@Nullable List<byte[]> initializationData) {
     assIsInMkv = initializationData != null && initializationData.size() > 1;
-    screenWidth = DIMEN_UNSET;
-    screenHeight = DIMEN_UNSET;
+    screenWidth = Cue.DIMEN_UNSET;
+    screenHeight = Cue.DIMEN_UNSET;
     parsableByteArray = new ParsableByteArray();
 
     if (initializationData != null && !initializationData.isEmpty()) {
@@ -126,13 +134,21 @@ public final class SsaParser implements SubtitleParser {
   }
 
   @Override
+  public @CueReplacementBehavior int getCueReplacementBehavior() {
+    return CUE_REPLACEMENT_BEHAVIOR;
+  }
+
   public void reset() {
     onReset(this);
   }
 
-  @Nullable
   @Override
-  public ImmutableList<CuesWithTiming> parse(byte[] data, int offset, int length) {
+  public void parse(
+      byte[] data,
+      int offset,
+      int length,
+      OutputOptions outputOptions,
+      Consumer<CuesWithTiming> output) {
     onData(this, data, offset, length);
     List<List<Cue>> cues = new ArrayList<>();
     List<Long> startTimesUs = new ArrayList<>();
@@ -146,26 +162,41 @@ public final class SsaParser implements SubtitleParser {
     }
     parseEventBody(parsableByteArray, cues, startTimesUs, charset);
 
-    ImmutableList.Builder<CuesWithTiming> cuesWithStartTimeAndDuration = ImmutableList.builder();
+    @Nullable
+    List<CuesWithTiming> cuesWithTimingBeforeRequestedStartTimeUs =
+        outputOptions.startTimeUs != C.TIME_UNSET && outputOptions.outputAllCues
+            ? new ArrayList<>()
+            : null;
     for (int i = 0; i < cues.size(); i++) {
       List<Cue> cuesForThisStartTime = cues.get(i);
       if (cuesForThisStartTime.isEmpty() && i != 0) {
         // An empty cue list has already been implicitly encoded in the duration of the previous
         // sample (unless there was no previous sample).
         continue;
+      } else if (i == cues.size() - 1) {
+        // The last cue list must be empty
+        throw new IllegalStateException();
       }
       long startTimeUs = startTimesUs.get(i);
-      // The duration of the last CuesWithTiming is C.TIME_UNSET by design
-      long durationUs =
-          i == cues.size() - 1 ? C.TIME_UNSET : startTimesUs.get(i + 1) - startTimesUs.get(i);
-      cuesWithStartTimeAndDuration.add(
-          new CuesWithTiming(cuesForThisStartTime, startTimeUs, durationUs));
+      // It's safe to inspect element i+1, because we already exited the loop above if i=size()-1.
+      long durationUs = startTimesUs.get(i + 1) - startTimesUs.get(i);
+      if (outputOptions.startTimeUs == C.TIME_UNSET || startTimeUs >= outputOptions.startTimeUs) {
+        output.accept(new CuesWithTiming(cuesForThisStartTime, startTimeUs, durationUs));
+
+      } else if (cuesWithTimingBeforeRequestedStartTimeUs != null) {
+        cuesWithTimingBeforeRequestedStartTimeUs.add(
+            new CuesWithTiming(cuesForThisStartTime, startTimeUs, durationUs));
+      }
     }
     if (bypassCueSheet) {
-      return ImmutableList.of();
+      return;
     }
 
-    return cuesWithStartTimeAndDuration.build();
+    if (cuesWithTimingBeforeRequestedStartTimeUs != null) {
+      for (CuesWithTiming cuesWithTiming : cuesWithTimingBeforeRequestedStartTimeUs) {
+        output.accept(cuesWithTiming);
+      }
+    }
   }
 
   @Override
@@ -201,8 +232,8 @@ public final class SsaParser implements SubtitleParser {
       } else if ("[Events]".equalsIgnoreCase(currentLine)) {
         // We've reached the [Events] section, so the header is over.
         if (screenHeight == 288 && screenWidth == 384) {
-          screenHeight = DIMEN_UNSET;
-          screenWidth = DIMEN_UNSET;
+          screenHeight = Cue.DIMEN_UNSET;
+          screenWidth = Cue.DIMEN_UNSET;
         }
         return;
       }
@@ -404,7 +435,7 @@ public final class SsaParser implements SubtitleParser {
             /* end= */ spannableText.length(),
             SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE);
       }
-      if (style.fontSize != DIMEN_UNSET && screenHeight != DIMEN_UNSET) {
+      if (style.fontSize != Cue.DIMEN_UNSET && screenHeight != Cue.DIMEN_UNSET) {
         cue.setTextSize(
             style.fontSize / screenHeight / 1.2f, Cue.TEXT_SIZE_TYPE_FRACTIONAL_IGNORE_PADDING);
       }
@@ -456,8 +487,8 @@ public final class SsaParser implements SubtitleParser {
         .setLineAnchor(toLineAnchor(alignment));
 
     if (styleOverrides.position != null
-        && screenHeight != DIMEN_UNSET
-        && screenWidth != DIMEN_UNSET) {
+        && screenHeight != Cue.DIMEN_UNSET
+        && screenWidth != Cue.DIMEN_UNSET) {
       cue.setPosition(styleOverrides.position.x / screenWidth);
       cue.setLine(styleOverrides.position.y / screenHeight, LINE_TYPE_FRACTION);
     } else {
@@ -546,7 +577,7 @@ public final class SsaParser implements SubtitleParser {
         return 1.0f - DEFAULT_MARGIN;
       case Cue.TYPE_UNSET:
       default:
-        return DIMEN_UNSET;
+        return Cue.DIMEN_UNSET;
     }
   }
 
