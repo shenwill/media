@@ -159,6 +159,8 @@ public final class FfmpegLibrary {
         return "hevc";
       case MimeTypes.VIDEO_MPEG:
         return "mpegvideo";
+      case MimeTypes.VIDEO_MP4V:
+        return "mpeg4";
       case MimeTypes.VIDEO_MPEG2:
         return "mpeg2video";
       case MimeTypes.VIDEO_VP8:
