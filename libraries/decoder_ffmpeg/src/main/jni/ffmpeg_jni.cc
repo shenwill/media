@@ -16,10 +16,12 @@
 #include <android/log.h>
 #include <jni.h>
 #include <stdlib.h>
+#include <thread>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
-#include <cstring>
-#include <algorithm>
+#include "BlockingQueue.h"
+#include <libyuv.h>
+#include <libyuv/scale.h>
 
 extern "C" {
 #ifdef __cplusplus
@@ -34,11 +36,14 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
 }
 
 #define LOG_TAG "ffmpeg_jni"
 #define LOGE(...) \
   ((void)__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__))
+#define LOGW(...) \
+  ((void)__android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__))
 #define LOGD(...) \
   ((void)__android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__))
 
@@ -83,6 +88,7 @@ static const AVSampleFormat OUTPUT_FORMAT_PCM_FLOAT = AV_SAMPLE_FMT_FLT;
 static const int AUDIO_DECODER_ERROR_INVALID_DATA = -1;
 static const int AUDIO_DECODER_ERROR_OTHER = -2;
 
+static const int VIDEO_DECODER_ERROR_SURFACE = -4;
 static const int VIDEO_DECODER_SUCCESS = 0;
 static const int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
 static const int VIDEO_DECODER_ERROR_OTHER = -2;
@@ -458,12 +464,6 @@ void releaseContext(AVCodecContext *context) {
 
 // video
 
-// YUV plane indices.
-const int kPlaneY = 0;
-const int kPlaneU = 1;
-const int kPlaneV = 2;
-const int kMaxPlanes = 3;
-
 // Android YUV format. See:
 // https://developer.android.com/reference/android/graphics/ImageFormat.html#YV12.
 const int kImageFormatYV12 = 0x32315659;
@@ -497,33 +497,167 @@ struct JniContext {
     jfieldID data_field;
     jfieldID yuvPlanes_field;
     jfieldID yuvStrides_field;
+    jfieldID width_field;
+    jfieldID height_field;
+    jfieldID pts_field;
     jmethodID init_for_private_frame_method;
     jmethodID init_for_yuv_frame_method;
     jmethodID init_method;
 
     AVCodecContext *codecContext;
+    SwsContext *swsContext;
 
     ANativeWindow *native_window = nullptr;
     jobject surface = nullptr;
+    // 旋转角度
+    int rotate_degree = 0;
     int native_window_width = 0;
     int native_window_height = 0;
+
+    // 接收数据的线程
+    std::thread *poll_image_thread;
+    bool released = false;
+    BlockingQueue<AVFrame *> *image_output_buffer = nullptr;
+    BlockingQueue<AVFrame *> *image_input_buffer = nullptr;
 };
 
-void CopyPlane(const uint8_t *source, int source_stride, uint8_t *destination,
-               int destination_stride, int width, int height) {
-  while (height--) {
-    std::memcpy(destination, source, width);
-    source += source_stride;
-    destination += destination_stride;
+constexpr int AlignTo16(int value) { return (value + 15) & (~15); }
+
+/**
+ * Convert AvFrame ColorSpace to exoplayer supported ColorSpace
+ */
+constexpr int cvt_colorspace(AVColorSpace colorSpace) {
+  int colorspace = 0;
+  switch (colorSpace) {
+    case AVCOL_SPC_BT470BG:
+    case AVCOL_SPC_SMPTE170M:
+    case AVCOL_SPC_SMPTE240M:
+      colorspace = 1;
+    case AVCOL_SPC_BT709:
+      colorspace = 2;
+    case AVCOL_SPC_BT2020_NCL:
+    case AVCOL_SPC_BT2020_CL:
+      colorspace = 3;
   }
+  return colorspace;
 }
 
-constexpr int AlignTo16(int value) { return (value + 15) & (~15); }
+/**
+ * Convert other format like(yuv420p10bit) to yuv420p
+ * and scale
+ * @return AVFrame
+ */
+AVFrame *cvt_frame(JniContext *jniContext,
+                   AVFrame *src,
+                   AVPixelFormat dst_format,
+                   int dst_width,
+                   int dst_height) {
+  auto src_format = AVPixelFormat(src->format);
+  auto swsContext = sws_getCachedContext(jniContext->swsContext,
+                                         src->width, src->height, src_format,
+                                         dst_width, dst_height, dst_format,
+                                         SWS_FAST_BILINEAR, NULL, NULL, NULL
+  );
+  if (!swsContext) {
+    LOGE("Failed to allocate swsContext.");
+    return nullptr;
+  }
+
+  jniContext->swsContext = swsContext;
+  auto dst = av_frame_alloc();
+  av_frame_copy_props(dst, src); // copy meta data
+  dst->width = dst_width;
+  dst->height = dst_height;
+  dst->format = dst_format;
+  auto alloc_result = av_frame_get_buffer(dst, 0);    // allocate buffer
+  if (alloc_result != 0) {
+    logError("av_frame_get_buffer", alloc_result);
+    av_frame_free(&dst);
+    return nullptr;
+  }
+  auto scale_result = sws_scale(swsContext,
+                                src->data, src->linesize, 0, src->height,
+                                dst->data, dst->linesize);
+  if (!scale_result) {
+    logError("sws_scale", scale_result);
+    av_frame_free(&dst);
+    return nullptr;
+  }
+  return dst;
+}
+
+/**
+ * Convert degree to libyuv::RotationMode
+ * @return libyuv::RotationMode
+ */
+libyuv::RotationMode cvt_rotate(int degree) {
+  libyuv::RotationMode rotate = libyuv::kRotate0;
+  if (degree == 90) {
+    rotate = libyuv::kRotate90;
+  } else if (degree == 180) {
+    rotate = libyuv::kRotate180;
+  } else if (degree == 270) {
+    rotate = libyuv::kRotate270;
+  }
+  return rotate;
+}
+
+/**
+ * Single Thread to Convert Standard YUV420
+ */
+void cvt_image_runnable(JniContext *jniContext) {
+  while (!jniContext->released) {
+    auto output_buffer = jniContext->image_output_buffer;
+    auto input_buffer = jniContext->image_input_buffer;
+
+    AVFrame *input = nullptr;
+    auto poll_rst = input_buffer->poll(input, 100L);
+    if (!poll_rst || input == nullptr) {
+      continue;
+    }
+
+    // success
+    // pixformat map to yuv420p
+    auto output = cvt_frame(jniContext, input, AVPixelFormat::AV_PIX_FMT_YUV420P, input->width,
+                            input->height);
+    if (!output) {
+      LOGE("Failed to cvt_frame");
+      av_frame_free(&input);
+      jniContext->released = true;
+      return;
+    }
+    av_frame_free(&input);
+
+    {
+      auto offer_rst = output_buffer->offer(output, 100L);
+      if (!offer_rst) {
+        av_frame_free(&output);
+      }
+    }
+  }
+
+  // free
+  while (!jniContext->image_input_buffer->empty()) {
+    auto buffer = jniContext->image_input_buffer->take();
+    av_frame_free(&buffer);
+  }
+  while (!jniContext->image_output_buffer->empty()) {
+    auto buffer = jniContext->image_output_buffer->take();
+    av_frame_free(&buffer);
+  }
+
+  auto swsContext = jniContext->swsContext;
+  if (swsContext) {
+    sws_freeContext(swsContext);
+    jniContext->swsContext = NULL;
+  }
+}
 
 JniContext *createVideoContext(JNIEnv *env,
                                const AVCodec *codec,
                                jbyteArray extraData,
-                               jint threads) {
+                               jint threads,
+                               jint degree) {
   JniContext *jniContext = new(std::nothrow)JniContext();
 
   AVCodecContext *codecContext = avcodec_alloc_context3(codec);
@@ -532,11 +666,13 @@ JniContext *createVideoContext(JNIEnv *env,
     return NULL;
   }
 
+  // rotate
+  jniContext->rotate_degree = degree;
+
   if (extraData) {
     jsize size = env->GetArrayLength(extraData);
     codecContext->extradata_size = size;
-    codecContext->extradata =
-            (uint8_t *) av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
+    codecContext->extradata = (uint8_t *) av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!codecContext->extradata) {
       LOGE("Failed to allocate extradata.");
       releaseContext(codecContext);
@@ -545,7 +681,12 @@ JniContext *createVideoContext(JNIEnv *env,
     env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
   }
 
-  codecContext->thread_count = threads;
+  // opt decode speed.
+  // codecContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
+  codecContext->debug = 1;
+  codecContext->skip_loop_filter = AVDISCARD_NONE;
+  codecContext->skip_frame = AVDISCARD_NONE;
+  codecContext->thread_count = 1;//threads;
   codecContext->err_recognition = AV_EF_IGNORE_ERR;
   int result = avcodec_open2(codecContext, codec, NULL);
   if (result < 0) {
@@ -556,10 +697,20 @@ JniContext *createVideoContext(JNIEnv *env,
 
   jniContext->codecContext = codecContext;
 
+  jniContext->image_output_buffer = new BlockingQueue<AVFrame *>(5);
+  jniContext->image_input_buffer = new BlockingQueue<AVFrame *>(5);
+  jniContext->poll_image_thread = new std::thread(cvt_image_runnable, jniContext);
+  pthread_setname_np(jniContext->poll_image_thread->native_handle(), "m3:ffmpeg:cvt");
+
   // Populate JNI References.
   const jclass outputBufferClass = env->FindClass(
           "androidx/media3/decoder/VideoDecoderOutputBuffer");
   jniContext->data_field = env->GetFieldID(outputBufferClass, "data", "Ljava/nio/ByteBuffer;");
+  jniContext->width_field = env->GetFieldID(outputBufferClass, "width", "I");
+  jniContext->height_field = env->GetFieldID(outputBufferClass, "height", "I");
+  jniContext->pts_field = env->GetFieldID(outputBufferClass, "timeUs", "J");
+
+
   jniContext->yuvPlanes_field =
           env->GetFieldID(outputBufferClass, "yuvPlanes", "[Ljava/nio/ByteBuffer;");
   jniContext->yuvStrides_field = env->GetFieldID(outputBufferClass, "yuvStrides", "[I");
@@ -573,223 +724,263 @@ JniContext *createVideoContext(JNIEnv *env,
   return jniContext;
 }
 
-VIDEO_DECODER_FUNC(jlong, ffmpegInitialize, jstring codecName, jbyteArray extraData, jint threads) {
-const AVCodec *codec = getCodecByName(env, codecName);
-if (!codec) {
-LOGE("Codec not found.");
-return 0L;
+
+VIDEO_DECODER_FUNC(jlong, ffmpegInitialize, jstring codecName,
+                   jbyteArray extraData, jint threads, jint degree) {
+  auto *codec = getCodecByName(env, codecName);
+  if (!codec) {
+    LOGE("Codec not found.");
+    return 0L;
+  }
+
+  return (jlong) createVideoContext(env, codec, extraData, threads, degree);
 }
 
-return (jlong) createVideoContext(env, codec, extraData, threads);
-}
 
 VIDEO_DECODER_FUNC(jlong, ffmpegReset, jlong jContext) {
-JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
-AVCodecContext *context = jniContext->codecContext;
-if (!context) {
-LOGE("Tried to reset without a context.");
-return 0L;
-}
+  JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
+  AVCodecContext *context = jniContext->codecContext;
+  if (!context) {
+    LOGE("Tried to reset without a context.");
+    return 0L;
+  }
 
-avcodec_flush_buffers(context);
-return (jlong) jniContext;
+  avcodec_flush_buffers(context);
+  return (jlong) jniContext;
 }
 
 VIDEO_DECODER_FUNC(void, ffmpegRelease, jlong jContext) {
   JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
   AVCodecContext *context = jniContext->codecContext;
+
   if (context) {
-    releaseContext(context);
+    avcodec_free_context(&context);
+    jniContext->codecContext = NULL;
   }
+
+  jniContext->released = true;
+  jniContext->poll_image_thread->detach();
 }
 
 
 VIDEO_DECODER_FUNC(jint, ffmpegSendPacket, jlong jContext, jobject encodedData,
-        jint length, jlong inputTimeUs) {
-JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
-AVCodecContext *avContext = jniContext->codecContext;
+                   jint length, jlong inputTimeUs) {
+  JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
+  AVCodecContext *avContext = jniContext->codecContext;
 
-uint8_t *inputBuffer = (uint8_t *) env->GetDirectBufferAddress(encodedData);
-AVPacket packet;
-av_init_packet(&packet);
-packet.data = inputBuffer;
-packet.size = length;
-packet.pts = inputTimeUs;
+  uint8_t *inputBuffer = (uint8_t *) env->GetDirectBufferAddress(encodedData);
+  auto packet = av_packet_alloc();
+  packet->data = inputBuffer;
+  packet->size = length;
+  packet->pts = inputTimeUs;
 
-int result = 0;
-// Queue input data.
-result = avcodec_send_packet(avContext, &packet);
-if (result) {
-logError("avcodec_send_packet", result);
-if (result == AVERROR_INVALIDDATA) {
-// need more data
-return VIDEO_DECODER_ERROR_INVALID_DATA;
-} else if (result == AVERROR(EAGAIN)) {
-// need read frame
-return VIDEO_DECODER_ERROR_READ_FRAME;
-} else {
-return VIDEO_DECODER_ERROR_OTHER;
-}
-}
-return result;
+  int result = 0;
+  // Queue input data.
+  result = avcodec_send_packet(avContext, packet);
+  av_packet_free(&packet);
+  if (result) {
+    logError("avcodec_send_packet", result);
+    if (result == AVERROR_INVALIDDATA) {
+      // need more data
+      return VIDEO_DECODER_ERROR_INVALID_DATA;
+    } else if (result == AVERROR(EAGAIN)) {
+      // need read frame
+      return VIDEO_DECODER_ERROR_READ_FRAME;
+    } else {
+      return VIDEO_DECODER_ERROR_OTHER;
+    }
+  }
+  return result;
 }
 
 VIDEO_DECODER_FUNC(jint, ffmpegReceiveFrame, jlong jContext, jint outputMode, jobject jOutputBuffer,
-jboolean decodeOnly) {
-JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
-AVCodecContext *avContext = jniContext->codecContext;
-int result = 0;
+                   jboolean decodeOnly) {
+  JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
+  AVCodecContext *avContext = jniContext->codecContext;
+  int result = 0;
+  AVFrame *frame = av_frame_alloc();
+  if (!frame) {
+    LOGE("Failed to allocate output frame.");
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
 
-AVFrame *frame = av_frame_alloc();
-if (!frame) {
-LOGE("Failed to allocate output frame.");
-return VIDEO_DECODER_ERROR_OTHER;
-}
-result = avcodec_receive_frame(avContext, frame);
+  result = avcodec_receive_frame(avContext, frame);
 
-// fail
-if (decodeOnly || result == AVERROR(EAGAIN)) {
-// This is not an error. The input data was decode-only or no displayable
-// frames are available.
-av_frame_free(&frame);
-return VIDEO_DECODER_ERROR_INVALID_DATA;
-}
-if (result) {
-av_frame_free(&frame);
-logError("avcodec_receive_frame", result);
-return VIDEO_DECODER_ERROR_OTHER;
-}
+  if (decodeOnly) {
+    av_frame_free(&frame);
+    return VIDEO_DECODER_ERROR_INVALID_DATA;
+  }
 
-// success
-// init time and mode
-env->CallVoidMethod(jOutputBuffer, jniContext->init_method, frame->pts, outputMode, nullptr);
+  if (result == AVERROR(EAGAIN)) {
+    // This is not an error. The input data was decode-only or no displayable
+    // frames are available.
+    av_frame_free(&frame);
+    return VIDEO_DECODER_ERROR_INVALID_DATA;
+  }
+  if (result != 0) {
+    av_frame_free(&frame);
+    if (result == AVERROR(EAGAIN)) {
+      // This is not an error. The input data was decode-only or no displayable
+      // frames are available.
+    } else {
+      logError("avcodec_receive_frame", result);
+      return VIDEO_DECODER_ERROR_OTHER;
+    }
+  }
 
-// init data
-const jboolean init_result = env->CallBooleanMethod(
-        jOutputBuffer, jniContext->init_for_yuv_frame_method,
-        frame->width,
-        frame->height,
-        frame->linesize[0], frame->linesize[1],
-        0);
-if (env->ExceptionCheck()) {
-// Exception is thrown in Java when returning from the native call.
-return VIDEO_DECODER_ERROR_OTHER;
-}
-if (!init_result) {
-return VIDEO_DECODER_ERROR_OTHER;
-}
+  if (jniContext->released || !jniContext->poll_image_thread->joinable()) {
+    LOGE("Poll image thread already shut down.");
+    av_frame_free(&frame);
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
 
-const jobject data_object = env->GetObjectField(jOutputBuffer, jniContext->data_field);
-jbyte *data = reinterpret_cast<jbyte *>(env->GetDirectBufferAddress(data_object));
-const int32_t uvHeight = (frame->height + 1) / 2;
-const uint64_t yLength = frame->linesize[0] * frame->height;
-const uint64_t uvLength = frame->linesize[1] * uvHeight;
+  // frame success! offer to pool
+  if (result == 0) {
+    auto offer_rst = jniContext->image_input_buffer->offer(frame);
+    if (!offer_rst) {
+      av_frame_free(&frame);
+      LOGW("Offer to image_input_buffer failed.");
+    }
+  }
 
-// TODO: Support rotate YUV data
+  // --- take cvt frame & return
 
-memcpy(data, frame->data[0], yLength);
-memcpy(data + yLength, frame->data[1], uvLength);
-memcpy(data + yLength + uvLength, frame->data[2], uvLength);
+  // success
+  int width = env->GetIntField(jOutputBuffer, jniContext->width_field);
+  int height = env->GetIntField(jOutputBuffer, jniContext->height_field);
 
-av_frame_free(&frame);
+  AVFrame *cvt_frame = nullptr;
+  jniContext->image_output_buffer->poll(cvt_frame);
+  if (cvt_frame == nullptr) {
+    LOGW("Poll from image_output_buffer failed.");
+    return VIDEO_DECODER_ERROR_INVALID_DATA;
+  }
 
-return result;
+  auto dst_width = cvt_frame->width;
+  auto dst_height = cvt_frame->height;
+  int output_width = dst_width;
+  int output_height = dst_height;
+
+  // adjust rotate degree
+  if (jniContext->rotate_degree == 90 || jniContext->rotate_degree == 270) {
+    output_width = dst_height;
+    output_height = dst_width;
+  }
+  // adjust ColorSpace
+  int color_space = cvt_colorspace(cvt_frame->colorspace);
+
+  int stride_y = output_width;
+  int stride_uv = (output_width + 1) / 2;
+
+  jboolean init_result = JNI_TRUE;
+  if (width != output_width && height != output_height) {
+    // init data
+    init_result = env->CallBooleanMethod(jOutputBuffer, jniContext->init_for_yuv_frame_method,
+                                         output_width, output_height, stride_y, stride_uv,
+                                         color_space);
+    LOGE("init_for_yuv_frame_method! wh [%d,%d], buffer wh [%d,%d]", output_width, output_height,
+         width, height);
+  } else {
+    env->SetLongField(jOutputBuffer, jniContext->pts_field, cvt_frame->pts);
+  }
+
+  if (env->ExceptionCheck()) {
+    av_frame_free(&cvt_frame);
+    // Exception is thrown in Java when returning from the native call.
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
+  if (!init_result) {
+    av_frame_free(&cvt_frame);
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
+
+  auto data_object = env->GetObjectField(jOutputBuffer, jniContext->data_field);
+  auto *data = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(data_object));
+
+  const int32_t height_uv = (output_height + 1) / 2;
+  const uint64_t length_y = stride_y * output_height;
+  const uint64_t length_uv = stride_uv * height_uv;
+
+  // rotate YUV data & copy to OutputBuffer
+  libyuv::RotationMode rotate = cvt_rotate(jniContext->rotate_degree);
+  libyuv::I420Rotate(
+          cvt_frame->data[0], cvt_frame->linesize[0],
+          cvt_frame->data[1], cvt_frame->linesize[1],
+          cvt_frame->data[2], cvt_frame->linesize[2],
+          data, stride_y,
+          data + length_y, stride_uv,
+          data + length_y + length_uv, stride_uv,
+          cvt_frame->width, cvt_frame->height, rotate
+  );
+  av_frame_free(&cvt_frame);
+  return result;
 }
 
 VIDEO_DECODER_FUNC(jint, ffmpegRenderFrame, jlong jContext, jobject jSurface,
-        jobject jOutputBuffer, jint displayedWidth, jint displayedHeight) {
-JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
-if (!jniContext->MaybeAcquireNativeWindow(env, jSurface)) {
-return VIDEO_DECODER_ERROR_OTHER;
-}
+                   jobject jOutputBuffer, jint displayedWidth, jint displayedHeight) {
+  JniContext *const jniContext = reinterpret_cast<JniContext *>(jContext);
+  if (!jniContext->MaybeAcquireNativeWindow(env, jSurface)) {
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
 
-if (jniContext->native_window_width != displayedWidth ||
-jniContext->native_window_height != displayedHeight) {
-if (ANativeWindow_setBuffersGeometry(
-        jniContext->native_window,
-displayedWidth,
-displayedHeight,
-kImageFormatYV12)) {
-LOGE("kJniStatusANativeWindowError");
-return VIDEO_DECODER_ERROR_OTHER;
-}
-jniContext->native_window_width = displayedWidth;
-jniContext->native_window_height = displayedHeight;
-}
+  if (jniContext->native_window_width != displayedWidth ||
+      jniContext->native_window_height != displayedHeight) {
+    int rst = ANativeWindow_setBuffersGeometry(
+            jniContext->native_window,
+            displayedWidth,
+            displayedHeight,
+            kImageFormatYV12);
+    if (rst) {
+      LOGE("kJniStatusANativeWindowError ANativeWindow_setBuffersGeometry rst [%d]", rst);
+      return VIDEO_DECODER_ERROR_OTHER;
+    }
+    jniContext->native_window_width = displayedWidth;
+    jniContext->native_window_height = displayedHeight;
+  }
 
-ANativeWindow_Buffer native_window_buffer;
-int result = ANativeWindow_lock(jniContext->native_window, &native_window_buffer, nullptr);
-if (result == -19) {
-// Surface: dequeueBuffer failed (No such device)
-jniContext->surface = nullptr;
-return VIDEO_DECODER_SUCCESS;
-} else if (result || native_window_buffer.bits == nullptr) {
-LOGE("kJniStatusANativeWindowError");
-return VIDEO_DECODER_ERROR_OTHER;
-}
+  ANativeWindow_Buffer native_window_buffer;
+  int result = ANativeWindow_lock(jniContext->native_window, &native_window_buffer, nullptr);
+  if (result == -19) {
+    // Surface: dequeueBuffer failed (No such device)
+    jniContext->surface = nullptr;
+    return VIDEO_DECODER_ERROR_SURFACE;
+  } else if (result || native_window_buffer.bits == nullptr) {
+    LOGE("kJniStatusANativeWindowError ANativeWindow_lock rst [%d]", result);
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
 
-jobject yuvPlanes_object = env->GetObjectField(jOutputBuffer, jniContext->yuvPlanes_field);
-jobjectArray yuvPlanes_array = static_cast<jobjectArray>(yuvPlanes_object);
-jobject yuvPlanesY = env->GetObjectArrayElement(yuvPlanes_array, kPlaneY);
-jobject yuvPlanesU = env->GetObjectArrayElement(yuvPlanes_array, kPlaneU);
-jobject yuvPlanesV = env->GetObjectArrayElement(yuvPlanes_array, kPlaneV);
-jbyte *planeY = reinterpret_cast<jbyte *>(env->GetDirectBufferAddress(yuvPlanesY));
-jbyte *planeU = reinterpret_cast<jbyte *>(env->GetDirectBufferAddress(yuvPlanesU));
-jbyte *planeV = reinterpret_cast<jbyte *>(env->GetDirectBufferAddress(yuvPlanesV));
+  auto data_object = env->GetObjectField(jOutputBuffer, jniContext->data_field);
+  auto *data = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(data_object));
 
-jobject yuvStrides_object = env->GetObjectField(jOutputBuffer, jniContext->yuvStrides_field);
-jintArray *yuvStrides_array = reinterpret_cast<jintArray *>(&yuvStrides_object);
+  auto frame_width = env->GetIntField(jOutputBuffer, jniContext->width_field);
+  auto frame_height = env->GetIntField(jOutputBuffer, jniContext->height_field);
+  int src_stride_y = frame_width;
+  int src_stride_uv = (frame_width + 1) / 2;
+  const int32_t height_uv = (frame_height + 1) / 2;
+  const uint64_t src_length_y = src_stride_y * frame_height;
+  const uint64_t src_length_uv = src_stride_uv * height_uv;
 
-int *yuvStrides = env->GetIntArrayElements(*yuvStrides_array, NULL);
-int strideY = yuvStrides[kPlaneY];
-int strideU = yuvStrides[kPlaneU];
-int strideV = yuvStrides[kPlaneV];
+  const int window_y_plane_size = native_window_buffer.stride * native_window_buffer.height;
+  const int32_t window_uv_plane_height = (native_window_buffer.height + 1) / 2;
+  const int window_uv_plane_stride = AlignTo16(native_window_buffer.stride / 2);
+  const int window_v_plane_height = std::min(window_uv_plane_height, native_window_buffer.height);
+  const int window_v_plane_size = window_v_plane_height * window_uv_plane_stride;
+  const auto window_bits = reinterpret_cast<uint8_t *>(native_window_buffer.bits);
 
-// Y plane
-CopyPlane(reinterpret_cast<const uint8_t *>(planeY),
-        strideY,
-reinterpret_cast<uint8_t *>(native_window_buffer.bits),
-native_window_buffer.stride,
-displayedWidth,
-displayedHeight);
+  libyuv::I420Copy(
+          data, src_stride_y,
+          data + src_length_y, src_stride_uv,
+          data + src_length_y + src_length_uv, src_stride_uv,
+          window_bits, native_window_buffer.stride,
+          window_bits + window_y_plane_size + window_v_plane_size, window_uv_plane_stride,
+          window_bits + window_y_plane_size, window_uv_plane_stride,
+          native_window_buffer.width, native_window_buffer.height
+  );
+  int rst = ANativeWindow_unlockAndPost(jniContext->native_window);
+  if (rst) {
+    LOGE("kJniStatusANativeWindowError ANativeWindow_unlockAndPost rst [%d]", rst);
+    return VIDEO_DECODER_ERROR_OTHER;
+  }
 
-const int y_plane_size = native_window_buffer.stride * native_window_buffer.height;
-const int32_t native_window_buffer_uv_height = (native_window_buffer.height + 1) / 2;
-const int native_window_buffer_uv_stride = AlignTo16(native_window_buffer.stride / 2);
-
-// TODO(b/140606738): Handle monochrome videos.
-
-// V plane
-// Since the format for ANativeWindow is YV12, V plane is being processed
-// before U plane.
-const int v_plane_height = std::min(native_window_buffer_uv_height,
-                                    displayedHeight);
-CopyPlane(
-reinterpret_cast<const uint8_t *>(planeV),
-        strideV,
-reinterpret_cast<uint8_t *>(native_window_buffer.bits) + y_plane_size,
-native_window_buffer_uv_stride, displayedWidth,
-v_plane_height);
-
-const int v_plane_size = v_plane_height * native_window_buffer_uv_stride;
-
-// U plane
-CopyPlane(
-reinterpret_cast<const uint8_t *>(planeU),
-        strideU,
-reinterpret_cast<uint8_t *>(native_window_buffer.bits) +
-y_plane_size + v_plane_size,
-native_window_buffer_uv_stride, displayedWidth,
-std::min(native_window_buffer_uv_height,
-        displayedHeight));
-
-
-env->ReleaseIntArrayElements(*yuvStrides_array, yuvStrides, 0);
-
-if (ANativeWindow_unlockAndPost(jniContext->native_window)) {
-LOGE("kJniStatusANativeWindowError");
-return VIDEO_DECODER_ERROR_OTHER;
-}
-
-return VIDEO_DECODER_SUCCESS;
+  return VIDEO_DECODER_SUCCESS;
 }

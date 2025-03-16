@@ -70,6 +70,7 @@ extensions/flac/src/main/jni/flac
 
 # FFmpeg extension
 libraries/decoder_ffmpeg/src/main/jni/ffmpeg
+libraries/decoder_ffmpeg/src/main/jni/libyuv
 libraries/decoder_ffmpeg/.cxx
 
 # Cronet extension

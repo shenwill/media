@@ -133,10 +133,10 @@ public final class ExperimentalFfmpegVideoRenderer extends DecoderVideoRenderer 
   public final int supportsFormat(Format format) {
     String mimeType = Assertions.checkNotNull(format.sampleMimeType);
     if (!FfmpegLibrary.isAvailable() || !MimeTypes.isVideo(mimeType)) {
-      return C.FORMAT_UNSUPPORTED_TYPE;
+      return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE);
     } else if (!FfmpegLibrary.supportsFormat(format.sampleMimeType)) {
       return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE);
-    } else if (format.drmInitData != null) {
+    } else if (format.cryptoType != C.CRYPTO_TYPE_NONE) {
       return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_DRM);
     } else {
       return RendererCapabilities.create(
@@ -146,7 +146,6 @@ public final class ExperimentalFfmpegVideoRenderer extends DecoderVideoRenderer 
     }
   }
 
-  @SuppressWarnings("nullness:return")
   @Override
   protected Decoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException>
   createDecoder(Format format, @Nullable CryptoConfig cryptoConfig)
@@ -154,8 +153,12 @@ public final class ExperimentalFfmpegVideoRenderer extends DecoderVideoRenderer 
     TraceUtil.beginSection("createFfmpegVideoDecoder");
     int initialInputBufferSize =
         format.maxInputSize != Format.NO_VALUE ? format.maxInputSize : DEFAULT_INPUT_BUFFER_SIZE;
-    Decoder decoder = new FfmpegVideoDecoder(numInputBuffers, numOutputBuffers, initialInputBufferSize, threads, format);
-    this.decoder = (FfmpegVideoDecoder) decoder;
+    int threads = Math.max(this.threads, 4);
+    FfmpegVideoDecoder decoder =
+        new FfmpegVideoDecoder(numInputBuffers, numOutputBuffers,
+            initialInputBufferSize, threads,
+            format);
+    this.decoder = decoder;
     TraceUtil.endSection();
     return decoder;
   }

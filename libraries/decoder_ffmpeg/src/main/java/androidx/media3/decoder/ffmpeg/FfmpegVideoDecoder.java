@@ -15,14 +15,20 @@
  */
 package androidx.media3.decoder.ffmpeg;
 
+import static androidx.annotation.VisibleForTesting.PACKAGE_PRIVATE;
+
 import android.util.Log;
 import android.view.Surface;
+
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
+import androidx.media3.decoder.DecoderInputBuffer;
 import androidx.media3.decoder.SimpleDecoder;
 import androidx.media3.decoder.VideoDecoderInputBuffer;
 import androidx.media3.decoder.VideoDecoderOutputBuffer;
@@ -33,9 +39,11 @@ import java.util.List;
 /**
  * Ffmpeg Video decoder.
  */
+@VisibleForTesting(otherwise = PACKAGE_PRIVATE)
+@UnstableApi
 /* package */ final class FfmpegVideoDecoder
     extends
-    SimpleDecoder<VideoDecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
+    SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
 
    private static final String TAG = "FfmpegVideoDecoder";
 
@@ -52,6 +60,7 @@ import java.util.List;
    private Format format;
 
    @C.VideoOutputMode private volatile int outputMode;
+   private int degree = 0;
 
    /**
     * Creates a Ffmpeg video Decoder.
@@ -75,7 +84,8 @@ import java.util.List;
       codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
       extraData = getExtraData(format.sampleMimeType, format.initializationData);
       this.format = format;
-      nativeContext = ffmpegInitialize(codecName, extraData, threads);
+      degree = format.rotationDegrees;
+      nativeContext = ffmpegInitialize(codecName, extraData, threads, degree);
       if (nativeContext == 0) {
          throw new FfmpegDecoderException("Failed to initialize decoder.");
       }
@@ -90,18 +100,23 @@ import java.util.List;
    private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
       switch (mimeType) {
          case MimeTypes.VIDEO_H264:
-            byte[] sps = initializationData.get(0);
-            byte[] pps = initializationData.get(1);
-            byte[] extraData = new byte[sps.length + pps.length];
-            System.arraycopy(sps, 0, extraData, 0, sps.length);
-            System.arraycopy(pps, 0, extraData, sps.length, pps.length);
-            return extraData;
          case MimeTypes.VIDEO_H265:
-            return initializationData.get(0);
+            int size = 0;
+            for (int i = 0; i < initializationData.size(); i++) {
+               size += initializationData.get(i).length;
+            }
+            if (size > 0) {
+               byte[] extra = new byte[size];
+               ByteBuffer wrapper = ByteBuffer.wrap(extra);
+               for (int i = 0; i < initializationData.size(); i++) {
+                  wrapper.put(initializationData.get(i));
+               }
+               return extra;
+            }
          default:
             // Other codecs do not require extra data.
-            return null;
       }
+      return null;
    }
 
    @Override
@@ -131,7 +146,7 @@ import java.util.List;
    @Override
    @Nullable
    protected FfmpegDecoderException decode(
-       VideoDecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset) {
+       DecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset) {
       if (reset) {
          nativeContext = ffmpegReset(nativeContext);
          if (nativeContext == 0) {
@@ -146,7 +161,7 @@ import java.util.List;
       int sendPacketResult = ffmpegSendPacket(nativeContext, inputData, inputSize,
           inputBuffer.timeUs);
       if (sendPacketResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
-         outputBuffer.setFlags(C.BUFFER_FLAG_DECODE_ONLY);
+         outputBuffer.shouldBeSkipped = true;
          return null;
       } else if (sendPacketResult == VIDEO_DECODER_ERROR_READ_FRAME) {
          // need read frame
@@ -156,16 +171,19 @@ import java.util.List;
       }
 
       // receive frame
-      boolean decodeOnly = inputBuffer.isDecodeOnly();
+      boolean decodeOnly = !isAtLeastOutputStartTimeUs(inputBuffer.timeUs);
       // We need to dequeue the decoded frame from the decoder even when the input data is
       // decode-only.
+      if (!decodeOnly) {
+         outputBuffer.init(inputBuffer.timeUs, outputMode, null);
+      }
       int getFrameResult = ffmpegReceiveFrame(nativeContext, outputMode, outputBuffer, decodeOnly);
       if (getFrameResult == VIDEO_DECODER_ERROR_OTHER) {
          return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
       }
 
       if (getFrameResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
-         outputBuffer.addFlag(C.BUFFER_FLAG_DECODE_ONLY);
+         outputBuffer.shouldBeSkipped = true;
       }
 
       if (!decodeOnly) {
@@ -209,7 +227,8 @@ import java.util.List;
       }
    }
 
-   private native long ffmpegInitialize(String codecName, @Nullable byte[] extraData, int threads);
+   private native long ffmpegInitialize(String codecName, @Nullable byte[] extraData, int threads,
+                                        int degree);
 
    private native long ffmpegReset(long context);
 

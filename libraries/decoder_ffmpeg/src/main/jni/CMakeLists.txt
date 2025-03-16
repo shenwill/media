@@ -25,16 +25,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_definitions(-g)
 endif()
 
-# Additional flags needed for "arm64-v8a" from NDK 23.1.7779620 and above.
-# See https://github.com/google/ExoPlayer/issues/9933#issuecomment-1029775358.
-if(${ANDROID_ABI} MATCHES "arm64-v8a")
-    set(CMAKE_CXX_FLAGS "-Wl,-Bsymbolic")
-endif()
-
 set(ffmpeg_location "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg")
 set(ffmpeg_binaries "${ffmpeg_location}/android-libs/${ANDROID_ABI}")
 
-foreach(ffmpeg_lib avutil swresample avcodec)
+foreach(ffmpeg_lib avutil swresample avcodec swscale)
     set(ffmpeg_lib_filename lib${ffmpeg_lib}.a)
     set(ffmpeg_lib_file_path ${ffmpeg_binaries}/${ffmpeg_lib_filename})
     add_library(
@@ -47,7 +41,27 @@ foreach(ffmpeg_lib avutil swresample avcodec)
             ${ffmpeg_lib_file_path})
 endforeach()
 
+
+set(yuv_location "${CMAKE_CURRENT_SOURCE_DIR}/libyuv")
+set(yuv_binaries "${yuv_location}/android-libs/${ANDROID_ABI}")
+
+foreach(yuv_lib yuv)
+    set(yuv_lib_filename lib${yuv_lib}.so)
+    set(yuv_lib_file_path ${yuv_binaries}/${yuv_lib_filename})
+    add_library(
+            ${yuv_lib}
+            SHARED
+            IMPORTED)
+    set_target_properties(
+            ${yuv_lib} PROPERTIES
+            IMPORTED_LOCATION
+            ${yuv_lib_file_path})
+endforeach()
+
+
 include_directories(${ffmpeg_location})
+include_directories("${yuv_location}/include")
+
 find_library(android_log_lib log)
 
 add_library(ffmpegJNI
@@ -55,8 +69,16 @@ add_library(ffmpegJNI
             ffmpeg_jni.cc)
 
 target_link_libraries(ffmpegJNI
-                      PRIVATE android
-                      PRIVATE swresample
-                      PRIVATE avcodec
-                      PRIVATE avutil
-                      PRIVATE ${android_log_lib})
+        PRIVATE android
+        PRIVATE swresample
+        PRIVATE avcodec
+        PRIVATE avutil
+        PRIVATE swscale
+        PRIVATE yuv
+        PRIVATE ${android_log_lib})
+
+# Additional flags needed for "arm64-v8a" from NDK 23.1.7779620 and above.
+# See https://github.com/google/ExoPlayer/issues/9933#issuecomment-1029775358.
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    target_link_options(ffmpegJNI PRIVATE "-Wl,-Bsymbolic")
+endif()

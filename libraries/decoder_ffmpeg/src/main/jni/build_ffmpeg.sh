@@ -31,13 +31,13 @@ echo "Using $JOBS jobs for make"
 COMMON_OPTIONS="
     --target-os=android
     --enable-static
-    --disable-shared
+    --enable-shared
     --disable-doc
     --disable-programs
     --disable-everything
     --disable-avdevice
     --disable-avformat
-    --disable-swscale
+    --enable-swscale
     --disable-postproc
     --disable-avfilter
     --disable-symver
