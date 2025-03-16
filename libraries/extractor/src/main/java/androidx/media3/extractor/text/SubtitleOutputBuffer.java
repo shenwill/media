@@ -23,6 +23,7 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.decoder.DecoderOutputBuffer;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 /** Base class for {@link SubtitleDecoder} output buffers. */
@@ -78,11 +79,14 @@ public abstract class SubtitleOutputBuffer extends DecoderOutputBuffer implement
     if (drawn) {
       pastCues.add(cues);
     }
-    if (pastCues.size() > 1) {
-      List<Cue> cuesToShrink = pastCues.get(0);
+    if (pastCues.size() > 3) {
+      List<Cue> cuesToShrink = pastCues.remove(0);
       for (Cue cue : cuesToShrink) {
         if (cue.bitmapDrawContext != null) {
-          cue.bitmap = null;
+          if (cue.bitmap != null) {
+            cue.bitmap.recycle();
+            cue.bitmap = null;
+          }
         }
       }
     }
@@ -92,6 +96,14 @@ public abstract class SubtitleOutputBuffer extends DecoderOutputBuffer implement
   @Override
   public void clear() {
     super.clear();
+    for (List<Cue> cues : pastCues) {
+      for (Cue cue : cues) {
+        if (cue.bitmap != null && !cue.bitmap.isRecycled()) {
+          cue.bitmap.recycle();
+          cue.bitmap = null;
+        }
+      }
+    }
     pastCues.clear();
     subtitle = null;
   }

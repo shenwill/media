@@ -67,23 +67,37 @@ public final class VobsubParser implements SubtitleParser {
   @Nullable private Inflater inflater;
   private final boolean hasIdx;
   private final boolean isFile;
+  private final int languageIndex;
+  private List<Long> timestamps = new ArrayList();
+  private List<Integer> fileOffsets = new ArrayList();
+  private int delayMs = 0;
+  private boolean idxHasPlane;
+  private int @MonotonicNonNull [] idxPalette;
+  private int idxPlaneWidth;
+  private int idxPlaneHeight;
 
   public VobsubParser(List<byte[]> initializationData) {
     scratch = new ParsableByteArray();
     inflatedScratch = new ParsableByteArray();
     hasIdx = initializationData != null && initializationData.size() > 0;
     isFile = initializationData != null && initializationData.size() >= 2;
-    cueBuilder = new CueBuilder();
+
     if (hasIdx) {
       if (isFile) {
-        cueBuilder.readIdxFromFile(initializationData);
+        languageIndex = readIdxFromFile(initializationData);
+        cueBuilder = new CueBuilder(idxPalette, idxHasPlane, idxPlaneWidth, idxPlaneHeight);
       } else {
+        cueBuilder = new CueBuilder();
+        languageIndex = C.INDEX_UNSET;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
           cueBuilder.parseIdx(new String(initializationData.get(0), UTF_8));
         } else {
           cueBuilder.parseIdx(new String(initializationData.get(0)));
         }
       }
+    } else {
+      cueBuilder = null;
+      languageIndex = C.INDEX_UNSET;
     }
   }
 
@@ -106,28 +120,7 @@ public final class VobsubParser implements SubtitleParser {
     scratch.reset(data, offset + length);
     scratch.setPosition(offset);
     if (isFile) {
-      if (Util.maybeInflate(scratch, inflatedScratch, inflater)) {
-        scratch.reset(inflatedScratch.getData(), inflatedScratch.limit());
-      }
-      int cueLength = cueBuilder.timestamps.size();
-      int totalBytes = scratch.bytesLeft();
-      int i = 0;
-      ParsableByteArray spuBuffer = new ParsableByteArray();
-      while (i < cueLength && cueBuilder.fileOffsets.get(i) < totalBytes) {
-        scratch.setPosition(cueBuilder.fileOffsets.get(i));
-        spuBufferFromMpegStream(spuBuffer, scratch);
-        cueBuilder.reset();
-        cueBuilder.readSpuFromMpegStream(spuBuffer);
-        Cue cue = cueBuilder.buildForSubFile(spuBuffer, false);
-        spuBuffer.reset(new byte[0]);
-        if (cue != null) {
-          CuesWithTiming cuesWithTiming = new CuesWithTiming(ImmutableList.of(cue),
-              cueBuilder.timestamps.get(i) + cueBuilder.delayMs * 1000,
-              cueBuilder.dateStop * 10000);
-          output.accept(cuesWithTiming);
-        }
-        i++;
-      }
+      parseSubFile(output);
       return;
     }
     @Nullable Cue cue = parse();
@@ -136,6 +129,24 @@ public final class VobsubParser implements SubtitleParser {
             cue != null ? ImmutableList.of(cue) : ImmutableList.of(),
             /* startTimeUs= */ C.TIME_UNSET,
             /* durationUs= */ DEFAULT_DURATION_US));
+  }
+
+  private void parseSubFile(Consumer<CuesWithTiming> output) {
+    if (Util.maybeInflate(scratch, inflatedScratch, inflater)) {
+      scratch.reset(inflatedScratch.getData(), inflatedScratch.limit());
+    }
+    int cueLength = timestamps.size();
+    int totalBytes = scratch.bytesLeft();
+    int i = 0;
+    ParsableByteArray spuBuffer = new ParsableByteArray();
+    while (i < cueLength && fileOffsets.get(i) < totalBytes) {
+      scratch.setPosition(fileOffsets.get(i));
+      int offsetLimit = i + 1 < fileOffsets.size() ? fileOffsets.get(i + 1) : totalBytes;
+      spuBufferFromMpegStream(spuBuffer, scratch, languageIndex, offsetLimit);
+      readSpuFromMpegStream(spuBuffer);
+      i = parseControlFromMpegStream(output, spuBuffer, i);
+      spuBuffer.reset(new byte[0]);
+    }
   }
 
   @Nullable
@@ -155,9 +166,70 @@ public final class VobsubParser implements SubtitleParser {
     return cueBuilder.build(scratch);
   }
 
-  private static void spuBufferFromMpegStream(
-      ParsableByteArray spuBuffer, ParsableByteArray buffer) {
+  private int readIdxFromFile(List<byte[]> dataList) {
+    ParsableByteArray buffer = new ParsableByteArray(dataList.get(0));
+    int langIndexSelected =
+        dataList.size() > 1 && dataList.get(1).length > 0 ? dataList.get(1)[0] : C.INDEX_UNSET;
+    boolean langHit = false;
     while (true) {
+      String line = buffer.readLine();
+      if (line == null) {
+        return langIndexSelected;
+      }
+      if (line.startsWith("#") || line.length() == 0) {
+        continue;
+      }
+      String[] stringHolder = new String[2];
+      if (testIdxLine(line, "size: ", stringHolder)) {
+        String[] values = stringHolder[1].trim().split("x");
+        if (values.length == 2) {
+          idxPlaneWidth = Integer.parseInt(values[0]);
+          idxPlaneHeight = Integer.parseInt(values[1]);
+          idxHasPlane = true;
+        }
+      } else if (testIdxLine(line, "palette: ", stringHolder)) {
+        String[] values = stringHolder[1].trim().split(",");
+        idxPalette = new int[values.length];
+        for (int i = 0; i < values.length; i++) {
+          idxPalette[i] = CueBuilder.parseColor(values[i].trim());
+        }
+      } else if (testIdxLine(line, "delay: ", stringHolder)
+          || testIdxLine(line, "time offset: ", stringHolder)) {
+        delayMs = Integer.parseInt(stringHolder[1].trim());
+      } else if (testIdxLine(line, "langidx: ", stringHolder)) {
+        if (langIndexSelected == C.INDEX_UNSET) {
+          langIndexSelected = Integer.parseInt(stringHolder[1].trim());
+        }
+      } else if (testIdxLine(line, "id: ", stringHolder)) { // id: en, index: 0
+        String[] parts = line.split(":");
+        // can quit right now since need to count language number
+        langHit = Integer.parseInt(parts[2].trim()) == langIndexSelected;
+      } else if (testIdxLine(line, "timestamp: ", stringHolder)) {
+        if (langHit) {
+          String[] parts = line.split(":");
+          timestamps.add((Long.parseLong(parts[1].trim()) * 3600000
+              + Long.parseLong(parts[2]) * 60000
+              + Long.parseLong(parts[3]) * 1000
+              + Long.parseLong(parts[4].substring(0, 3))) * 1000);
+          fileOffsets.add(Integer.parseInt(parts[5].trim(), 16));
+        }
+      }
+    }
+  }
+
+  private boolean testIdxLine(
+      @NonNull String line, @NonNull String prefixToTest, @NonNull String[] partsHolder) {
+    if (line.startsWith(prefixToTest)) {
+      partsHolder[0] = prefixToTest;
+      partsHolder[1] = line.substring(prefixToTest.length());
+      return true;
+    }
+    return false;
+  }
+
+  private static void spuBufferFromMpegStream(
+      ParsableByteArray spuBuffer, ParsableByteArray buffer, int langIndex, int offsetLimit) {
+    while (buffer.getPosition() < offsetLimit) {
       long headId = buffer.readUnsignedInt();
       if (headId == 0x000001ba) { // PS Package
         buffer.skipBytes(9);
@@ -166,28 +238,113 @@ public final class VobsubParser implements SubtitleParser {
       } else if (headId == 0x000001bb) { // PS System Header
         buffer.skipBytes(buffer.readUnsignedShort());
       } else if (headId == 0x000001bd) { // PES Package
+        // (2 bytes) flags + (1 byte) head data length + (0-n bytes) header data
+        // + (1 byte) stuff flags + (0-n bytes) stuff
         int packageLength = buffer.readUnsignedShort();
         buffer.readUnsignedShort(); // PES flags
         int headDataLength = buffer.readUnsignedByte();
         buffer.skipBytes(headDataLength);
-        int dataLength = packageLength - 3 - headDataLength;
-        Assertions.checkState((buffer.readUnsignedByte() & 0x20) == 0x20);
-        if (spuBuffer.getData().length == 0) {
-          spuBuffer.reset(new byte[buffer.readUnsignedShort()], dataLength - 1);
-          buffer.setPosition(buffer.getPosition() - 2);
-          buffer.readBytes(spuBuffer.getData(), 0, dataLength - 1);
-        } else {
-          buffer.readBytes(spuBuffer.getData(), spuBuffer.limit(), dataLength - 1);
-          spuBuffer.reset(spuBuffer.limit() + dataLength - 1);
+        int subFlag = buffer.readUnsignedByte();
+        Assertions.checkState((subFlag & 0x20) == 0x20);
+        int currentPackageDataLength = packageLength - 3 - headDataLength - 1;
+        if ((subFlag & 0x1f) != langIndex) {
+          buffer.skipBytes(currentPackageDataLength);
+          continue;
         }
-        if (spuBuffer.limit() == spuBuffer.getData().length) {
+        if (spuBuffer.getData().length == 0) {
+          int completeDataLength = buffer.readUnsignedShort();
+          buffer.setPosition(buffer.getPosition() - 2);
+          spuBuffer.reset(new byte[completeDataLength], 0);
+        }
+        if (spuBuffer.limit() + currentPackageDataLength <= spuBuffer.capacity()) {
+          buffer.readBytes(spuBuffer.getData(), spuBuffer.limit(), currentPackageDataLength);
+          spuBuffer.setLimit(spuBuffer.limit() + currentPackageDataLength);
+          if (spuBuffer.limit() >= spuBuffer.capacity()) {
+            return;
+          }
+        } else {
+          Log.w(TAG, "spuBufferFromMpegStream: exceeding spuBuffer capacity.");
           return;
         }
       } else if (headId == 0x000001be) { // padding stream
         int paddingLength = buffer.readUnsignedShort();
         buffer.skipBytes(paddingLength);
+      } else {
+        Log.w(TAG, String.format("unexpected head id: %x" + headId));
       }
     }
+  }
+
+  @Nullable
+  private void readSpuFromMpegStream(ParsableByteArray buffer) {
+    int spuLength = buffer.readUnsignedShort();
+    Assertions.checkState(spuLength == buffer.bytesLeft() + 2);
+    int controlSectionOffset = buffer.readUnsignedShort();
+    buffer.setPosition(controlSectionOffset);
+  }
+
+  private int parseControlFromMpegStream(
+      Consumer<CuesWithTiming> output, ParsableByteArray buffer, int i) {
+
+    int previousCmdTime = 0;
+    Cue previousCue = null;
+    while (buffer.bytesLeft() >= 4) {
+      int cmdDate = buffer.readUnsignedShort();
+      int cmdNextOffset = buffer.readUnsignedShort();
+      int commands = cueBuilder.readControlSequenceFromMpegStream(buffer, cmdDate);
+      boolean error = commands < 0;
+      boolean cmdStop = !error && (commands & (1 << cueBuilder.CMD_STOP)) != 0;
+      boolean reachingEnd = buffer.getPosition() > cmdNextOffset || buffer.bytesLeft() < 4;
+      boolean startAgain = !error && previousCue != null
+          && (commands & (1 << cueBuilder.CMD_START)) != 0;
+      boolean colorChanged = (commands & (1 << cueBuilder.CMD_ALPHA)) != 0
+          || (commands & (1 << cueBuilder.CMD_COLORS)) != 0;
+      // output previous cue since the duration is determined at this moment
+      if (previousCue != null &&
+          (error || cmdStop || startAgain || colorChanged || reachingEnd)) {
+        long startTimeUs = timestamps.get(i) + convertTime(previousCmdTime);
+        long durationUs = cmdStop ? convertTime(cmdDate - previousCmdTime) : C.TIME_UNSET;
+        outputCue(output, previousCue, startTimeUs, durationUs);
+        previousCue = null;
+      }
+      if (error) {
+        cueBuilder.reset();
+        i++;
+        break;
+      }
+      if (colorChanged) {
+        Cue cue = cueBuilder.buildForSubFile(buffer, false);
+        if (cmdStop || reachingEnd) {
+          long startTimeUs = timestamps.get(i) + delayMs * 1000 + convertTime(cmdDate);
+          long durationUs = cmdStop ? 1 : C.TIME_UNSET;
+          outputCue(output, cue, startTimeUs, durationUs);
+        } else {
+          previousCue = cue;
+          previousCmdTime = cmdDate;
+        }
+      }
+      if (cmdStop) {
+        cueBuilder.reset();
+      }
+      if (cmdStop || startAgain || reachingEnd) {
+        i++;
+      }
+      if (buffer.getPosition() > cmdNextOffset) {
+        break;
+      }
+    }
+    return i;
+  }
+
+  private static int convertTime(int previousCmdTime) {
+    return (previousCmdTime << 10) / 90 * 1000;
+  }
+
+  private void outputCue(
+      Consumer<CuesWithTiming> output, Cue cue, long startTimeUs, long durationUs) {
+    CuesWithTiming cuesWithTiming = new CuesWithTiming(
+        ImmutableList.of(cue), startTimeUs + delayMs * 1000, durationUs);
+    output.accept(cuesWithTiming);
   }
 
   private static final class CueBuilder {
@@ -202,24 +359,28 @@ public final class VobsubParser implements SubtitleParser {
     private static final int CMD_END = 255;
 
     private final int[] colors;
-
-    private int delayMs = 0;
-    private int dateStop;
     private boolean hasPlane;
     private boolean hasColors;
     private int @MonotonicNonNull [] palette;
     private int planeWidth;
     private int planeHeight;
-    @Nullable private Rect boundingBox;
+    @Nullable
+    private Rect boundingBox;
     private int dataOffset0;
     private int dataOffset1;
-    private List<Long> timestamps = new ArrayList();
-    private List<Integer> fileOffsets = new ArrayList();
 
     public CueBuilder() {
       colors = new int[4];
       dataOffset0 = C.INDEX_UNSET;
       dataOffset1 = C.INDEX_UNSET;
+    }
+
+    public CueBuilder(int[] palette, boolean hasPlane, int planeWidth, int planeHeight) {
+      this();
+      this.palette = palette;
+      this.hasPlane = hasPlane;
+      this.planeWidth = planeWidth;
+      this.planeHeight = planeHeight;
     }
 
     public void parseIdx(String idx) {
@@ -488,128 +649,57 @@ public final class VobsubParser implements SubtitleParser {
 
     // following for idx/sub files
 
-    private void readIdxFromFile(List<byte[]> dataList) {
-      ParsableByteArray buffer = new ParsableByteArray(dataList.get(0));
-      int langIndexSelected =
-          dataList.size() > 1 && dataList.get(1).length > 0 ? dataList.get(1)[0] : C.INDEX_UNSET;
-      boolean langHit = false;
-      while (true) {
-        String line = buffer.readLine();
-        if (line == null) {
-          return;
-        }
-        if (line.startsWith("#") || line.length() == 0) {
-          continue;
-        }
-        String[] stringHolder = new String[2];
-        if (testIdxLine(line, "size: ", stringHolder)) {
-          String[] values = stringHolder[1].trim().split("x");
-          if (values.length == 2) {
-            planeWidth = Integer.parseInt(values[0]);
-            planeHeight = Integer.parseInt(values[1]);
-            hasPlane = true;
-          }
-        } else if (testIdxLine(line, "palette: ", stringHolder)) {
-          String[] values = stringHolder[1].trim().split(",");
-          palette = new int[values.length];
-          for (int i = 0; i < values.length; i++) {
-            palette[i] = parseColor(values[i].trim());
-          }
-        } else if (testIdxLine(line, "delay: ", stringHolder)
-            || testIdxLine(line, "time offset: ", stringHolder)) {
-          delayMs = Integer.parseInt(stringHolder[1].trim());
-        } else if (testIdxLine(line, "langidx: ", stringHolder)) {
-          if (langIndexSelected == C.INDEX_UNSET) {
-            langIndexSelected = Integer.parseInt(stringHolder[1].trim());
-          }
-        } else if (testIdxLine(line, "id: ", stringHolder)) { // id: en, index: 0
-          String[] parts = line.split(":");
-          boolean newLangHit = Integer.parseInt(parts[2].trim()) == langIndexSelected;
-          if (langHit && !newLangHit) {
-            return;
-          }
-          langHit = newLangHit;
-        } else if (testIdxLine(line, "timestamp: ", stringHolder)) {
-          if (langHit) {
-            String[] parts = line.split(":");
-            timestamps.add((Long.parseLong(parts[1].trim()) * 3600000
-                + Long.parseLong(parts[2]) * 60000
-                + Long.parseLong(parts[3]) * 1000
-                + Long.parseLong(parts[4].substring(0, 3))) * 1000);
-            fileOffsets.add(Integer.parseInt(parts[5].trim(), 16));
-          }
-        }
-      }
-    }
-
-    private boolean testIdxLine(
-        @NonNull String line, @NonNull String prefixToTest, @NonNull String[] partsHolder) {
-      if (line.startsWith(prefixToTest)) {
-        partsHolder[0] = prefixToTest;
-        partsHolder[1] = line.substring(prefixToTest.length());
-        return true;
-      }
-      return false;
-    }
-
-    private void parseControlFromMpegStream(ParsableByteArray buffer) {
-      while (buffer.bytesLeft() >= 4) {
-        int cmdDate = buffer.readUnsignedShort();
-        int cmdNextOffset = buffer.readUnsignedShort();
-        readControlSequenceFromMpegStream(buffer, cmdDate);
-        if (buffer.getPosition() > cmdNextOffset) {
-          return;
-        }
-      }
-    }
-
-    private void readControlSequenceFromMpegStream(ParsableByteArray buffer, int cmdDate) {
-      while (buffer.bytesLeft() > 0) {
-        switch (buffer.readUnsignedByte()) {
+    private int readControlSequenceFromMpegStream(ParsableByteArray buffer, int cmdDate) {
+      int cmdFlag = 0;
+      boolean go = true;
+      while (buffer.bytesLeft() > 0 && go) {
+        int cmd = buffer.readUnsignedByte();
+        switch (cmd) {
           case CMD_FORCE_START:
             // forceDisplay = true;
+            cmdFlag |= 1 << CMD_FORCE_START;
             break;
           case CMD_START:
             // dateStart = cmdDate;
+            cmdFlag |= 1 << CMD_START;
             break;
           case CMD_STOP:
-            dateStop = cmdDate;
+            cmdFlag |= 1 << CMD_STOP;
             break;
           case CMD_COLORS:
+            cmdFlag |= 1 << CMD_COLORS;
             if (!parseControlColors(palette, buffer)) {
-              return;
+              return -3;
             }
             break;
           case CMD_ALPHA:
+            cmdFlag |= 1 << CMD_ALPHA;
             if (!parseControlAlpha(buffer)) {
-              return;
+              return -4;
             }
             break;
           case CMD_AREA:
+            cmdFlag |= 1 << CMD_AREA;
             if (!parseControlArea(buffer)) {
-              return;
+              return -5;
             }
             break;
           case CMD_OFFSETS:
+            cmdFlag |= 1 << CMD_OFFSETS;
             if (!parseControlOffsets(buffer)) {
-              return;
+              return -6;
             }
             break;
           case 7: // unimplemented
           case CMD_END: // end
-          default: // invalid
-            return;
+            go = false;
+            break;
+          default:
+            // unexpected cmd
+            return -cmd;
         }
       }
-    }
-
-    @Nullable
-    private void readSpuFromMpegStream(ParsableByteArray buffer) {
-      int spuLength = buffer.readUnsignedShort();
-      Assertions.checkState(spuLength == buffer.bytesLeft() + 2);
-      int controlSectionOffset = buffer.readUnsignedShort();
-      buffer.setPosition(controlSectionOffset);
-      parseControlFromMpegStream(buffer);
+      return cmdFlag;
     }
 
     @Nullable
