@@ -55,6 +55,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -213,6 +214,11 @@ public class PlayerControlView extends FrameLayout {
     void onVisibilityChange(int visibility);
   }
 
+  public interface CodecSelectionListener {
+
+    void onCodecSelect(String codecHint);
+  }
+
   /** Listener to be notified when progress has been updated. */
   public interface ProgressUpdateListener {
 
@@ -264,6 +270,7 @@ public class PlayerControlView extends FrameLayout {
 
   private static final int SETTINGS_PLAYBACK_SPEED_POSITION = 0;
   private static final int SETTINGS_AUDIO_TRACK_SELECTION_POSITION = 1;
+  private static final int SETTINGS_PLAYBACK_CODEC_POSITION = 2;
 
   private final PlayerControlViewLayoutManager controlViewLayoutManager;
   private final Resources resources;
@@ -274,6 +281,7 @@ public class PlayerControlView extends FrameLayout {
 
   private final RecyclerView settingsView;
   private final SettingsAdapter settingsAdapter;
+  private final PlaybackCodecAdapter playbackCodecAdapter;
   private final PlaybackSpeedAdapter playbackSpeedAdapter;
   private final TextTrackSelectionAdapter textTrackSelectionAdapter;
   private final AudioTrackSelectionAdapter audioTrackSelectionAdapter;
@@ -330,6 +338,7 @@ public class PlayerControlView extends FrameLayout {
 
   @Nullable private Player player;
   @Nullable private ProgressUpdateListener progressUpdateListener;
+  @Nullable private CodecSelectionListener codecSelectionListener;
 
   @Nullable private OnFullScreenModeChangedListener onFullScreenModeChangedListener;
   private boolean isFullScreen;
@@ -546,8 +555,8 @@ public class PlayerControlView extends FrameLayout {
     controlViewLayoutManager = new PlayerControlViewLayoutManager(this);
     controlViewLayoutManager.setAnimationEnabled(animationEnabled);
 
-    String[] settingTexts = new String[2];
-    Drawable[] settingIcons = new Drawable[2];
+    String[] settingTexts = new String[3];
+    Drawable[] settingIcons = new Drawable[3];
     settingTexts[SETTINGS_PLAYBACK_SPEED_POSITION] =
         resources.getString(R.string.exo_controls_playback_speed);
     settingIcons[SETTINGS_PLAYBACK_SPEED_POSITION] =
@@ -556,6 +565,10 @@ public class PlayerControlView extends FrameLayout {
         resources.getString(R.string.exo_track_selection_title_audio);
     settingIcons[SETTINGS_AUDIO_TRACK_SELECTION_POSITION] =
         getDrawable(context, resources, R.drawable.exo_styled_controls_audiotrack);
+    settingTexts[SETTINGS_PLAYBACK_CODEC_POSITION] =
+        resources.getString(R.string.exo_controls_playback_codec);
+    settingIcons[SETTINGS_PLAYBACK_CODEC_POSITION] =
+        getDrawable(context, resources, R.drawable.exo_styled_controls_codec);
     settingsAdapter = new SettingsAdapter(settingTexts, settingIcons);
     settingsWindowMargin = resources.getDimensionPixelSize(R.dimen.exo_settings_offset);
     settingsView =
@@ -585,6 +598,9 @@ public class PlayerControlView extends FrameLayout {
         resources.getString(R.string.exo_controls_cc_disabled_description);
     textTrackSelectionAdapter = new TextTrackSelectionAdapter();
     audioTrackSelectionAdapter = new AudioTrackSelectionAdapter();
+    playbackCodecAdapter =
+        new PlaybackCodecAdapter(
+            resources.getStringArray(R.array.exo_controls_playback_codecs));
     playbackSpeedAdapter =
         new PlaybackSpeedAdapter(
             resources.getStringArray(R.array.exo_controls_playback_speeds), PLAYBACK_SPEEDS);
@@ -736,6 +752,14 @@ public class PlayerControlView extends FrameLayout {
   @Deprecated
   public void removeVisibilityListener(VisibilityListener listener) {
     visibilityListeners.remove(listener);
+  }
+
+  public void setCodecSelectionListener(CodecSelectionListener listener) {
+    codecSelectionListener = listener;
+  }
+
+  public void updateCodecSelection(String codecHint) {
+    playbackCodecAdapter.updateSelectedIndex(TextUtils.isEmpty(codecHint) ? 0 : 1);
   }
 
   /**
@@ -987,6 +1011,7 @@ public class PlayerControlView extends FrameLayout {
     updateRepeatModeButton();
     updateShuffleButton();
     updateTrackLists();
+    updatePlaybackCodecList();
     updatePlaybackSpeedList();
     updateTimeline();
   }
@@ -1317,6 +1342,12 @@ public class PlayerControlView extends FrameLayout {
     }
   }
 
+  private void updatePlaybackCodecList() {
+    settingsAdapter.setSubTextAtPosition(
+        SETTINGS_PLAYBACK_CODEC_POSITION, playbackCodecAdapter.getSelectedText());
+    updateSettingsButton();
+  }
+
   private void updatePlaybackSpeedList() {
     if (player == null) {
       return;
@@ -1355,7 +1386,7 @@ public class PlayerControlView extends FrameLayout {
     needToHideBars = true;
 
     int xoff = getWidth() - settingsWindow.getWidth() - settingsWindowMargin;
-    int yoff = -settingsWindow.getHeight() - settingsWindowMargin;
+    int yoff = - settingsWindowMargin;
 
     settingsWindow.showAsDropDown(anchorView, xoff, yoff);
   }
@@ -1440,6 +1471,8 @@ public class PlayerControlView extends FrameLayout {
       displaySettingsWindow(playbackSpeedAdapter, checkNotNull(settingsButton));
     } else if (position == SETTINGS_AUDIO_TRACK_SELECTION_POSITION) {
       displaySettingsWindow(audioTrackSelectionAdapter, checkNotNull(settingsButton));
+    } else if (position == SETTINGS_PLAYBACK_CODEC_POSITION) {
+      displaySettingsWindow(playbackCodecAdapter, checkNotNull(settingsButton));
     } else {
       settingsWindow.dismiss();
     }
@@ -1814,7 +1847,8 @@ public class PlayerControlView extends FrameLayout {
 
     public boolean hasSettingsToShow() {
       return shouldShowSetting(SETTINGS_AUDIO_TRACK_SELECTION_POSITION)
-          || shouldShowSetting(SETTINGS_PLAYBACK_SPEED_POSITION);
+          || shouldShowSetting(SETTINGS_PLAYBACK_SPEED_POSITION)
+          || shouldShowSetting(SETTINGS_PLAYBACK_CODEC_POSITION);
     }
 
     private boolean shouldShowSetting(int position) {
@@ -1827,6 +1861,7 @@ public class PlayerControlView extends FrameLayout {
               && player.isCommandAvailable(COMMAND_SET_TRACK_SELECTION_PARAMETERS);
         case SETTINGS_PLAYBACK_SPEED_POSITION:
           return player.isCommandAvailable(COMMAND_SET_SPEED_AND_PITCH);
+        case SETTINGS_PLAYBACK_CODEC_POSITION:
         default:
           return true;
       }
@@ -1849,6 +1884,64 @@ public class PlayerControlView extends FrameLayout {
       subTextView = itemView.findViewById(R.id.exo_sub_text);
       iconView = itemView.findViewById(R.id.exo_icon);
       itemView.setOnClickListener(v -> onSettingViewClicked(getAdapterPosition()));
+    }
+  }
+
+  private final class PlaybackCodecAdapter extends RecyclerView.Adapter<SubSettingViewHolder> {
+
+    private final String[] playbackCodecTexts;
+    private int selectedIndex;
+
+    public PlaybackCodecAdapter(String[] playbackCodecTexts) {
+      this.playbackCodecTexts = playbackCodecTexts;
+    }
+
+    public void updateSelectedIndex(int indexSelected) {
+      selectedIndex = indexSelected;
+      updatePlaybackCodecList();
+    }
+
+    public String getSelectedText() {
+      return playbackCodecTexts[selectedIndex];
+    }
+
+    @Override
+    public SubSettingViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+      View v =
+          LayoutInflater.from(getContext())
+              .inflate(
+                  R.layout.exo_styled_sub_settings_list_item, parent, /* attachToRoot= */ false);
+      return new SubSettingViewHolder(v);
+    }
+
+    @Override
+    public void onBindViewHolder(SubSettingViewHolder holder, int position) {
+      if (position < playbackCodecTexts.length) {
+        holder.textView.setText(playbackCodecTexts[position]);
+      }
+      if (position == selectedIndex) {
+        holder.itemView.setSelected(true);
+        holder.checkView.setVisibility(VISIBLE);
+      } else {
+        holder.itemView.setSelected(false);
+        holder.checkView.setVisibility(INVISIBLE);
+      }
+      holder.itemView.setOnClickListener(
+          v -> {
+            if (position != selectedIndex) {
+              playbackCodecAdapter.updateSelectedIndex(position);
+              if (codecSelectionListener != null) {
+                codecSelectionListener.onCodecSelect(
+                    playbackCodecAdapter.selectedIndex == 0 ? null : "alt");
+              }
+            }
+            settingsWindow.dismiss();
+          });
+    }
+
+    @Override
+    public int getItemCount() {
+      return playbackCodecTexts.length;
     }
   }
 

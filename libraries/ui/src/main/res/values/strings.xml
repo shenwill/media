@@ -71,9 +71,14 @@
   <!-- Accessibility description for a closed captions (subtitles) button, when subtitles are disabled. If the user clicks the button, closed captions will be enabled. [CHAR_LIMIT=NONE] -->
   <string name="exo_controls_cc_disabled_description">Enable subtitles</string>
   <!-- Accessibility description for a playback speed selection button. The button is shown with the current playback speed. If a user clicks it, the list of possible playback speeds will be shown. [CHAR_LIMIT=NONE] -->
+  <string name="exo_controls_playback_codec" translatable="false">☵</string>
   <string name="exo_controls_playback_speed">Speed</string>
   <!-- LINT.IfChange(playback_speeds) -->
   <!-- Different media playback speeds from one quarter normal speed ("0.25x") to double normal speed ("2x"). The fourth item ("Normal") corresponds to normal playback speed. [CHAR_LIMIT=16] -->
+  <string-array name="exo_controls_playback_codecs">
+    <item>1</item>
+    <item>2</item>
+  </string-array>
   <string-array name="exo_controls_playback_speeds">
     <item>0.25x</item>
     <item>0.5x</item>
