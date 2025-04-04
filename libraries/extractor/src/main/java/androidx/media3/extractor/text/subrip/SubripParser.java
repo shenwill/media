@@ -337,7 +337,7 @@ public final class SubripParser implements SubtitleParser {
     for (int i = 0; i < charsets.length; i++) {
       try {
         String s = new String(bytes, offset, length, charsets[i]);
-        if (s.indexOf("\uFFFD") < 0 && s.indexOf("\uF815") < 0) {
+        if (s.indexOf("\uFFFD") < 0 && s.indexOf("\uF815") < 0 && s.indexOf("\uE019") < 0) {
           return i == 0 ? null : s.getBytes();
         }
       } catch (Exception e) {
