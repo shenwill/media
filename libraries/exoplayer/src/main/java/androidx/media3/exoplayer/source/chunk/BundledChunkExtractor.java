@@ -234,7 +234,7 @@ public final class BundledChunkExtractor implements ExtractorOutput, ChunkExtrac
   }
 
   @Override
-  public void chapterStartTimes(long[] startTimes) {
+  public void chapters(long[] startTimes, String[] titles) {
 
   }
 

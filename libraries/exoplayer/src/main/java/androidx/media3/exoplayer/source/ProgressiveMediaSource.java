@@ -54,10 +54,6 @@ import com.google.errorprone.annotations.CanIgnoreReturnValue;
 public final class ProgressiveMediaSource extends BaseMediaSource
     implements ProgressiveMediaPeriod.Listener {
 
-  public long[] getStartTimes() {
-    return this.chapterStartTimes;
-  }
-
   /** Factory for {@link ProgressiveMediaSource}s. */
   @SuppressWarnings("deprecation") // Implement deprecated type for backwards compatibility.
   public static final class Factory implements MediaSourceFactory {
@@ -241,7 +237,6 @@ public final class ProgressiveMediaSource extends BaseMediaSource
   private long timelineDurationUs;
   private boolean timelineIsSeekable;
   private boolean timelineIsLive;
-  private long[] chapterStartTimes;
   @Nullable private TransferListener transferListener;
 
   @GuardedBy("this")
@@ -348,11 +343,6 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     timelineIsLive = isLive;
     timelineIsPlaceholder = false;
     notifySourceInfoRefreshed();
-  }
-
-  @Override
-  public void onChapterStartTimesReady(long[] chapterStartTimes) {
-    this.chapterStartTimes = chapterStartTimes;
   }
 
   // Internal methods.

@@ -67,7 +67,7 @@ public final class StartOffsetExtractorOutput implements ExtractorOutput {
   }
 
   @Override
-  public void chapterStartTimes(long[] startTimes) {
+  public void chapters(long[] startTimes, String[] titles) {
 
   }
 }

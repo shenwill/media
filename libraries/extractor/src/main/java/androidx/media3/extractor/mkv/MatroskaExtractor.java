@@ -998,9 +998,9 @@ public class MatroskaExtractor implements Extractor {
         break;
       case ID_CHAPTERS:
         if (chapters.size() == 0) {
-          extractorOutput.chapterStartTimes(new long[0]);
+          extractorOutput.chapters(new long[0], new String[0]);
         } else {
-          extractorOutput.chapterStartTimes(getChapterStartTimes());
+          extractorOutput.chapters(getChapterStartTimes(), getChapterTitles(null));
         }
         break;
       case ID_TRACK_ENTRY:

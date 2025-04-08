@@ -21,6 +21,8 @@ import static java.lang.Math.min;
 
 import android.net.Uri;
 import android.os.Handler;
+import android.text.TextUtils;
+
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.C.DataType;
@@ -62,11 +64,17 @@ import androidx.media3.extractor.SeekMap.SeekPoints;
 import androidx.media3.extractor.SeekMap.Unseekable;
 import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.metadata.icy.IcyHeaders;
+import androidx.media3.extractor.metadata.id3.ChapterFrame;
+import androidx.media3.extractor.metadata.id3.ChapterTocFrame;
+import androidx.media3.extractor.metadata.id3.Id3Frame;
+import androidx.media3.extractor.metadata.id3.TextInformationFrame;
+
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -91,7 +99,6 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
      * @param isLive Whether the period is live.
      */
     void onSourceInfoRefreshed(long durationUs, boolean isSeekable, boolean isLive);
-    void onChapterStartTimesReady(long[] chapterStartTimes);
   }
 
   /**
@@ -706,8 +713,33 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   @Override
-  public void chapterStartTimes(long[] startTimes) {
-    listener.onChapterStartTimesReady(startTimes);
+  public void chapters(long[] startTimes, String[] titles) {
+    if (sampleQueues == null || sampleQueues.length == 0
+        || startTimes == null || startTimes.length == 0) {
+      return;
+    }
+    int length = startTimes.length;
+    boolean useTitles = titles != null && titles.length == length;
+    ChapterFrame[] subChapterFrames = new ChapterFrame[length];
+    for (int i = 0; i < length; i++) {
+      int startTimeMs = (int) (startTimes[i] / 1000_000);
+      int endTimeMs = i + 1 < length ? (int) (startTimes[i + 1] / 1000_000) - 1 : 0;
+      Id3Frame[] subFrames = null;
+      if (useTitles && !TextUtils.isEmpty(titles[i])) {
+        Id3Frame textFrame = new TextInformationFrame("", null, List.of(titles[i]));
+        subFrames = new Id3Frame[]{textFrame};
+      }
+      subChapterFrames[i] = new ChapterFrame("", startTimeMs, endTimeMs, 0, 0, subFrames);
+    }
+    ChapterTocFrame chapterTocFrame =
+        new ChapterTocFrame("", true, true, new String[length], subChapterFrames);
+    for (int i = 0; i < sampleQueues.length; i++) {
+      Format format = sampleQueues[i].getUpstreamFormat();
+      Metadata metadata = format.metadata;
+      Metadata newMetadata = metadata != null ? metadata.copyWithAppendedEntries(chapterTocFrame)
+          : new Metadata(chapterTocFrame);
+      sampleQueues[i].format(format.buildUpon().setMetadata(newMetadata).build());
+    }
   }
 
   // Icy metadata. Called by the loading thread.

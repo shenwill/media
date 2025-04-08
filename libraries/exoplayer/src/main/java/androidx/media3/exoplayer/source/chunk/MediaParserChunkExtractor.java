@@ -198,7 +198,7 @@ public final class MediaParserChunkExtractor implements ChunkExtractor {
     }
 
     @Override
-    public void chapterStartTimes(long[] startTimes) {
+    public void chapters(long[] startTimes, String[] titles) {
       // Do nothing.
     }
   }

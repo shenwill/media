@@ -70,7 +70,7 @@ import androidx.media3.extractor.TrackOutput;
   }
 
   @Override
-  public void chapterStartTimes(long[] startTimes) {
+  public void chapters(long[] startTimes, String[] titles) {
 
   }
 }

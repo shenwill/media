@@ -1162,7 +1162,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   @Override
-  public void chapterStartTimes(long[] startTimes) {
+  public void chapters(long[] startTimes, String[] titles) {
     // Do nothing.
   }
 
