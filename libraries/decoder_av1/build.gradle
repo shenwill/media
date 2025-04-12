@@ -16,6 +16,7 @@ apply from: "$gradle.ext.androidxMediaSettingsDir/common_library_config.gradle"
 android {
     namespace 'androidx.media3.decoder.av1'
 
+    ndkVersion = '25.1.8937393'
     defaultConfig {
         externalNativeBuild {
             cmake {

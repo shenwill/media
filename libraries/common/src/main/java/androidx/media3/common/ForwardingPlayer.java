@@ -1011,6 +1011,8 @@ public class ForwardingPlayer implements Player {
     public void onPlayWhenReadyChanged(
         boolean playWhenReady, @PlayWhenReadyChangeReason int reason) {
       listener.onPlayWhenReadyChanged(playWhenReady, reason);
+      onSeekBackIncrementChanged(forwardingPlayer.getSeekBackIncrement());
+      onSeekForwardIncrementChanged(forwardingPlayer.getSeekForwardIncrement());
     }
 
     @Override

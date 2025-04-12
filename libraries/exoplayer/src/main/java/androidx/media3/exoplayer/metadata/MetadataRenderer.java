@@ -47,7 +47,7 @@ import org.checkerframework.dataflow.qual.SideEffectFree;
  * #MetadataRenderer(MetadataOutput, Looper, MetadataDecoderFactory, boolean)}.
  */
 @UnstableApi
-public final class MetadataRenderer extends BaseRenderer implements Callback {
+public class MetadataRenderer extends BaseRenderer implements Callback {
 
   private static final String TAG = "MetadataRenderer";
   private static final int MSG_INVOKE_RENDERER = 0;
