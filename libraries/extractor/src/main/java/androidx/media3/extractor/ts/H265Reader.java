@@ -261,6 +261,7 @@ public final class H265Reader implements ElementaryStreamReader {
         .setId(formatId)
         .setSampleMimeType(MimeTypes.VIDEO_H265)
         .setCodecs(codecs)
+        .setFrameRate(spsData.frameRate)
         .setWidth(spsData.width)
         .setHeight(spsData.height)
         .setColorInfo(

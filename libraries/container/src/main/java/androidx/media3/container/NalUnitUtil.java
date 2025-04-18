@@ -141,6 +141,7 @@ public final class NalUnitUtil {
     public final int seqParameterSetId;
     public final int width;
     public final int height;
+    public final float frameRate;
     public final float pixelWidthHeightRatio;
     public final @C.ColorSpace int colorSpace;
     public final @C.ColorRange int colorRange;
@@ -159,6 +160,7 @@ public final class NalUnitUtil {
         int seqParameterSetId,
         int width,
         int height,
+        float frameRate,
         float pixelWidthHeightRatio,
         @C.ColorSpace int colorSpace,
         @C.ColorRange int colorRange,
@@ -175,6 +177,7 @@ public final class NalUnitUtil {
       this.seqParameterSetId = seqParameterSetId;
       this.width = width;
       this.height = height;
+      this.frameRate = frameRate;
       this.pixelWidthHeightRatio = pixelWidthHeightRatio;
       this.colorSpace = colorSpace;
       this.colorRange = colorRange;
@@ -724,6 +727,7 @@ public final class NalUnitUtil {
     @C.ColorRange int colorRange = Format.NO_VALUE;
     @C.ColorTransfer int colorTransfer = Format.NO_VALUE;
     float pixelWidthHeightRatio = 1;
+    float frameRate = Format.NO_VALUE;
     if (data.readBit()) { // vui_parameters_present_flag
       if (data.readBit()) { // aspect_ratio_info_present_flag
         int aspectRatioIdc = data.readBits(8);
@@ -766,6 +770,20 @@ public final class NalUnitUtil {
         // represent fields, which means that frame height is double the picture height.
         frameHeight *= 2;
       }
+      data.skipBit(); // frame_field_info_present_flag
+      if (data.readBit()) { // default_display_window_flag
+        data.readUnsignedExpGolombCodedInt(); // def_disp_win_left_offset
+        data.readUnsignedExpGolombCodedInt(); // def_disp_win_right_offset
+        data.readUnsignedExpGolombCodedInt(); // def_disp_win_top_offset
+        data.readUnsignedExpGolombCodedInt(); // def_disp_win_bottom_offset
+      }
+      if (data.readBit()) { // vui_timing_info_present_flag
+        int vuiNumUnitsInTick = data.readBits(32);
+        int vuiTimeScale = data.readBits(32);
+        if (vuiNumUnitsInTick > 0 && vuiTimeScale > 0) {
+          frameRate = vuiTimeScale / (float) vuiNumUnitsInTick;
+        }
+      }
     }
 
     return new H265SpsData(
@@ -781,6 +799,7 @@ public final class NalUnitUtil {
         seqParameterSetId,
         frameWidth,
         frameHeight,
+        frameRate,
         pixelWidthHeightRatio,
         colorSpace,
         colorRange,
