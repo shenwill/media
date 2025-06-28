@@ -82,10 +82,18 @@ public final class ApeExtractor implements Extractor {
   public void release() {
   }
 
+  private long resumePosition = -1;
+
   @Override
   public int read(ExtractorInput input, PositionHolder seekPosition) throws IOException {
     switch (state) {
       case STATE_READ_HEADER:
+        if (input.getPosition() != 0) {
+          Log.d(TAG, "Seek position to 0 to read header");
+          resumePosition = input.getPosition();
+          seekPosition.position = 0;
+          return Extractor.RESULT_SEEK;
+        }
         input.resetPeekPosition();
         apeInfo = ApeHeaderReader.read(input);
         processSeekTable(apeInfo, input);
@@ -96,7 +104,13 @@ public final class ApeExtractor implements Extractor {
           input.skipFully(bytesSkip);
           state = STATE_READ_FRAMES;
           currentFrame = 0;
-          return Extractor.RESULT_CONTINUE;
+          if (resumePosition == -1) {
+            return Extractor.RESULT_CONTINUE;
+          } else {
+            seekPosition.position = resumePosition;
+            resumePosition = -1;
+            return Extractor.RESULT_SEEK;
+          }
         } else {
           return Extractor.RESULT_END_OF_INPUT;
         }
@@ -109,7 +123,7 @@ public final class ApeExtractor implements Extractor {
   }
 
   public void seek(long position, long timeUs) {
-    if (position == 0) {
+    if (position == 0 || apeInfo == null) {
       state = STATE_READ_HEADER;
     } else {
       long samples = getSamplesAtTimeUs(timeUs, apeInfo.sampleRate, apeInfo.totalSamples);

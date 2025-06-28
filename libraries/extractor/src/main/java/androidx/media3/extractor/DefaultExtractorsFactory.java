@@ -129,6 +129,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         // The following extractors are not part of the optimized ordering, and were appended
         // without further analysis.
         FileTypes.AVI,
+        FileTypes.APE,
         FileTypes.MIDI,
         FileTypes.JPEG,
         FileTypes.PNG,
