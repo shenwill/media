@@ -279,7 +279,11 @@ import org.checkerframework.checker.nullness.qual.NonNull;
         RELEASE_TIMEOUT_MS,
         () -> {
           if (serviceConnection != null) {
-            context.unbindService(serviceConnection);
+            try {
+              context.unbindService(serviceConnection);
+            } catch (Exception e) {
+              e.printStackTrace();
+            }
             serviceConnection = null;
           }
           controllerStub.destroy();
