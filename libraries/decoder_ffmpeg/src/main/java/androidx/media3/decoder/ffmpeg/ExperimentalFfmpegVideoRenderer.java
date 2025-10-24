@@ -140,7 +140,8 @@ public final class ExperimentalFfmpegVideoRenderer extends DecoderVideoRenderer 
       return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_DRM);
     } else {
       return RendererCapabilities.create(
-          C.FORMAT_HANDLED,
+          MimeTypes.VIDEO_DOLBY_VISION.equals(format.sampleMimeType) ?
+              C.FORMAT_EXCEEDS_CAPABILITIES : C.FORMAT_HANDLED,
           ADAPTIVE_SEAMLESS,
           TUNNELING_NOT_SUPPORTED);
     }

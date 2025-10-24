@@ -1307,7 +1307,7 @@ public class PlayerControlView extends FrameLayout {
       position = currentWindowOffset + player.getContentPosition();
       bufferedPosition = currentWindowOffset + player.getContentBufferedPosition();
     }
-    if (positionView != null && !scrubbing) {
+    if (positionView != null && !scrubbing && player != null) {
       positionView.setText(Util.getStringForTime(formatBuilder, formatter, position, !player.getPlayWhenReady()));
     }
     if (timeBar != null) {
@@ -1330,7 +1330,7 @@ public class PlayerControlView extends FrameLayout {
       mediaTimeDelayMs = Math.min(mediaTimeDelayMs, mediaTimeUntilNextFullSecondMs);
 
       // Calculate the delay until the next update in real time, taking playback speed into account.
-      float playbackSpeed = player.getPlaybackParameters().speed;
+      float playbackSpeed = player != null ? player.getPlaybackParameters().speed : 1.f;
       long delayMs =
           playbackSpeed > 0 ? (long) (mediaTimeDelayMs / playbackSpeed) : MAX_UPDATE_INTERVAL_MS;
 

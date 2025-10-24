@@ -3077,6 +3077,11 @@ public final class Util {
    */
   @UnstableApi
   public static Point getCurrentDisplayModeSize(Context context) {
+    Display defaultDisplay = getDefaultDisplay(context);
+    return getCurrentDisplayModeSize(context, defaultDisplay);
+  }
+
+  public static Display getDefaultDisplay(Context context) {
     @Nullable Display defaultDisplay = null;
     if (SDK_INT >= 17) {
       @Nullable
@@ -3093,7 +3098,7 @@ public final class Util {
           checkNotNull((WindowManager) context.getSystemService(Context.WINDOW_SERVICE));
       defaultDisplay = windowManager.getDefaultDisplay();
     }
-    return getCurrentDisplayModeSize(context, defaultDisplay);
+    return defaultDisplay;
   }
 
   /**

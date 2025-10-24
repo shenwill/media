@@ -1130,7 +1130,9 @@ public class MatroskaExtractor implements Extractor {
       case ID_CONTENT_COMPRESSION_ALGORITHM:
         // This extractor only supports header stripping.
         if (value != 3) {
-          throw ParserException.createForMalformedContainer(
+          getCurrentTrack(id).invalid = true;
+          // throw ParserException.createForMalformedContainer(
+          Log.w(TAG,
               "ContentCompAlgo " + value + " not supported", /* cause= */ null);
         }
         break;
@@ -2494,6 +2496,7 @@ public class MatroskaExtractor implements Extractor {
     public boolean flagForced;
     public boolean flagDefault = true;
     private String language = "eng";
+    public boolean invalid;
 
     // Set when the output is initialized. nalUnitLengthFieldLength is only set for H264/H265.
     public @MonotonicNonNull TrackOutput output;
