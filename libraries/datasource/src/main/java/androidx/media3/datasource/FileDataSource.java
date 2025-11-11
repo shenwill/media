@@ -129,6 +129,7 @@ public final class FileDataSource extends BaseDataSource {
     }
 
     opened = true;
+    pRead = pWrite = -1;
     transferStarted(dataSpec);
 
     return bytesRemaining;
@@ -136,25 +137,62 @@ public final class FileDataSource extends BaseDataSource {
 
   @Override
   public int read(byte[] buffer, int offset, int length) throws FileDataSourceException {
-    if (length == 0) {
-      return 0;
-    } else if (bytesRemaining == 0) {
-      return C.RESULT_END_OF_INPUT;
-    } else {
-      int bytesRead;
-      try {
-        bytesRead = castNonNull(file).read(buffer, offset, (int) min(bytesRemaining, length));
-      } catch (IOException e) {
-        throw new FileDataSourceException(e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED);
-      }
-
-      if (bytesRead > 0) {
-        bytesRemaining -= bytesRead;
-        bytesTransferred(bytesRead);
-      }
-
-      return bytesRead;
+    try {
+      return readInternal(buffer, offset, length);
+    } catch (IOException e) {
+      throw new FileDataSourceException(e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED);
     }
+  }
+
+  // the buffer size has to big enough to serve 4K video playback
+  private final byte[] buf = new byte[C.DEFAULT_BUFFER_SEGMENT_SIZE];
+  private int pRead = -1;
+  private int pWrite = -1;
+
+  private int readInternal(byte[] buffer, int offset, int readLength) throws IOException {
+    if (readLength == 0) {
+      return 0;
+    }
+    if (bytesRemaining != C.LENGTH_UNSET) {
+      if (bytesRemaining == 0) {
+        //Log.d(TAG, "C.RESULT_END_OF_INPUT: bytesRemaining == 0");
+        return C.RESULT_END_OF_INPUT;
+      }
+      readLength = (int) min(readLength, bytesRemaining);
+    }
+    // a lot reading with small length (e.g.: 2 bytes) take long time for SmbFileInputStream
+    int read;
+    if (pRead >= 0 && pRead != pWrite) {
+      //read = Math.min(readLength, pWrite > pRead ? pWrite - pRead : buf.length - pRead);
+      assert  pWrite > pRead;
+      read = Math.min(readLength, pWrite - pRead);
+      System.arraycopy(buf, pRead, buffer, offset, read);
+      pRead += read; // max value should be buf.length
+    } else {
+      assert pRead == pWrite; // -1 at first time, most are 0 and buf.length
+      pRead = 0;
+      pWrite = 0;
+      if (readLength > buf.length / 2) {
+        read = castNonNull(file).read(buffer, offset, readLength);
+      } else {
+        int r = castNonNull(file).read(buf, 0, buf.length);
+        if (r > 0) {
+          pWrite = r;
+          read = Math.min(readLength, r);
+          System.arraycopy(buf, pRead, buffer, offset, read);
+          pRead += read;
+        } else {
+          read = r;
+        }
+      }
+    }
+    if (read == -1) {
+      return C.RESULT_END_OF_INPUT;
+    }
+
+    bytesRemaining -= read;
+    bytesTransferred(read);
+    return read;
   }
 
   @Override
