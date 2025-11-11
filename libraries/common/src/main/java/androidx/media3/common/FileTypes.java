@@ -61,6 +61,7 @@ public final class FileTypes {
    *   <li>{@link #RM}
    *   <li>{@link #RMVB}
    *   <li>{@link #APE}
+   *   <li>{@link #M2TS}
    * </ul>
    */
   @Documented
@@ -68,7 +69,7 @@ public final class FileTypes {
   @Target(TYPE_USE)
   @IntDef({
     UNKNOWN, AC3, AC4, ADTS, AMR, FLAC, FLV, MATROSKA, MP3, MP4, OGG, PS, TS, WAV, WEBVTT, JPEG,
-    MIDI, AVI, PNG, WEBP, BMP, HEIF, RM, RMVB, APE
+    MIDI, AVI, PNG, WEBP, BMP, HEIF, RM, RMVB, APE, M2TS
   })
   public @interface Type {}
 
@@ -141,6 +142,7 @@ public final class FileTypes {
   public static final int APE = 21;
   public static final int RM = 22;
   public static final int RMVB = 23;
+  public static final int M2TS = 24;
 
   @VisibleForTesting /* package */ static final String HEADER_CONTENT_TYPE = "Content-Type";
 
@@ -169,6 +171,7 @@ public final class FileTypes {
   private static final String EXTENSION_MPEG = ".mpeg";
   private static final String EXTENSION_MPG = ".mpg";
   private static final String EXTENSION_M2P = ".m2p";
+  private static final String EXTENSION_M2TS = ".m2ts";
   private static final String EXTENSION_TS = ".ts";
   private static final String EXTENSION_PREFIX_TS = ".ts";
   private static final String EXTENSION_WAV = ".wav";
@@ -321,6 +324,8 @@ public final class FileTypes {
             EXTENSION_PREFIX_TS,
             /* toffset= */ filename.length() - (EXTENSION_PREFIX_TS.length() + 1))) {
       return FileTypes.TS;
+    } else if (filename.endsWith(EXTENSION_M2TS)) {
+      return FileTypes.M2TS;
     } else if (filename.endsWith(EXTENSION_WAV) || filename.endsWith(EXTENSION_WAVE)) {
       return FileTypes.WAV;
     } else if (filename.endsWith(EXTENSION_VTT) || filename.endsWith(EXTENSION_WEBVTT)) {

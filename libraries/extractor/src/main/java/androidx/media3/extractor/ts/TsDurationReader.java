@@ -40,6 +40,8 @@ import java.io.IOException;
 
   private static final String TAG = "TsDurationReader";
 
+  private final int packetSize;
+  private final int packetPrefixSize;
   private final int timestampSearchBytes;
   private final TimestampAdjuster pcrTimestampAdjuster;
   private final ParsableByteArray packetBuffer;
@@ -52,7 +54,9 @@ import java.io.IOException;
   private long lastPcrValue;
   private long durationUs;
 
-  /* package */ TsDurationReader(int timestampSearchBytes) {
+  /* package */ TsDurationReader(int timestampSearchBytes, int packetSize, int prefixSize) {
+    this.packetPrefixSize = prefixSize;
+    this.packetSize = packetSize;
     this.timestampSearchBytes = timestampSearchBytes;
     pcrTimestampAdjuster = new TimestampAdjuster(/* firstSampleTimestampUs= */ 0);
     firstPcrValue = C.TIME_UNSET;
@@ -185,11 +189,12 @@ import java.io.IOException;
     int searchEndPosition = packetBuffer.limit();
     // We start searching 'TsExtractor.TS_PACKET_SIZE' bytes from the end to prevent trying to read
     // from an incomplete TS packet.
-    for (int searchPosition = searchEndPosition - TsExtractor.TS_PACKET_SIZE;
+    for (int searchPosition = searchEndPosition - packetSize;
         searchPosition >= searchStartPosition;
         searchPosition--) {
       if (!TsUtil.isStartOfTsPacket(
-          packetBuffer.getData(), searchStartPosition, searchEndPosition, searchPosition)) {
+          packetBuffer.getData(), searchStartPosition, searchEndPosition, searchPosition,
+          packetSize, packetPrefixSize)) {
         continue;
       }
       long pcrValue = TsUtil.readPcrFromPacket(packetBuffer, searchPosition, pcrPid);

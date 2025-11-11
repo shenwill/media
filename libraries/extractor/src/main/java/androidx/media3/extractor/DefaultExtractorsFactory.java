@@ -529,6 +529,13 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
                 new DefaultTsPayloadReaderFactory(tsFlags, tsSubtitleFormats),
                 tsTimestampSearchBytes));
         break;
+      case FileTypes.M2TS:
+        extractors.add(
+            new TsExtractor(
+                TsExtractor.MODE_M2TS,
+                /* defaultTsPayloadReaderFlags= */ 0,
+                TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES));
+        break;
       case FileTypes.WAV:
         extractors.add(new WavExtractor());
         break;
