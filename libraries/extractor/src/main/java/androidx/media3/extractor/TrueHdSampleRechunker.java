@@ -46,6 +46,9 @@ public final class TrueHdSampleRechunker {
     chunkSampleCount = 0;
   }
 
+  public void setFoundSyncframe(boolean value) {
+    foundSyncframe = value;
+  }
   public void startSample(ExtractorInput input) throws IOException {
     if (foundSyncframe) {
       return;

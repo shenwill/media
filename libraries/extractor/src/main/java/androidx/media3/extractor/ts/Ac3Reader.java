@@ -51,9 +51,9 @@ public final class Ac3Reader implements ElementaryStreamReader {
   @IntDef({STATE_FINDING_SYNC, STATE_READING_HEADER, STATE_READING_SAMPLE})
   private @interface State {}
 
-  private static final int STATE_FINDING_SYNC = 0;
-  private static final int STATE_READING_HEADER = 1;
-  private static final int STATE_READING_SAMPLE = 2;
+  public static final int STATE_FINDING_SYNC = 0;
+  public static final int STATE_READING_HEADER = 1;
+  public static final int STATE_READING_SAMPLE = 2;
 
   private static final int HEADER_SIZE = 128;
 
@@ -64,11 +64,11 @@ public final class Ac3Reader implements ElementaryStreamReader {
   private @MonotonicNonNull String formatId;
   private @MonotonicNonNull TrackOutput output;
 
-  private @State int state;
+  public @State int state;
   private int bytesRead;
 
   // Used to find the header.
-  private boolean lastByteWas0B;
+  public boolean lastByteWas0B;
 
   // Used when parsing the header.
   private long sampleDurationUs;

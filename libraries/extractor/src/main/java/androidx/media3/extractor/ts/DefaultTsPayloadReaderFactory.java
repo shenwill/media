@@ -163,6 +163,8 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
       case TsExtractor.TS_STREAM_TYPE_AC3:
       case TsExtractor.TS_STREAM_TYPE_E_AC3:
         return new PesReader(new Ac3Reader(esInfo.language));
+      case TsExtractor.TS_STREAM_TYPE_TRUEHD:
+        return new PesReader(new MlpReader(esInfo.language));
       case TsExtractor.TS_STREAM_TYPE_AC4:
         return new PesReader(new Ac4Reader(esInfo.language));
       case TsExtractor.TS_STREAM_TYPE_HDMV_DTS:
@@ -197,6 +199,8 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         return new PesReader(new DvbSubtitleReader(esInfo.dvbSubtitleInfos));
       case TsExtractor.TS_STREAM_TYPE_AIT:
         return new SectionReader(new PassthroughSectionPayloadReader(MimeTypes.APPLICATION_AIT));
+      case TsExtractor.TS_STREAM_TYPE_SUBTITLE_PGS:
+        return new PesReader(new PgsReader(esInfo.language, false));
       default:
         return null;
     }
