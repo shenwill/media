@@ -476,6 +476,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
   @RequiresNonNull({"cueBitmap", "bitmapRect"})
   private void drawBitmapLayout(Canvas canvas) {
+    if (cueBitmap.isRecycled()) {
+      return;
+    }
     canvas.drawBitmap(cueBitmap, /* src= */ null, bitmapRect, bitmapPaint);
   }
 

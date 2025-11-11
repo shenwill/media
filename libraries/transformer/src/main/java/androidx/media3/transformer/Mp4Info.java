@@ -220,6 +220,11 @@ import org.checkerframework.checker.nullness.qual.Nullable;
       seekMapInitialized = true;
     }
 
+    @Override
+    public void chapters(long[] startTimes, String[] titles) {
+
+    }
+
     private static final class TrackOutputImpl implements TrackOutput {
       private static final int FIXED_BYTE_ARRAY_SIZE = 16_000;
 
