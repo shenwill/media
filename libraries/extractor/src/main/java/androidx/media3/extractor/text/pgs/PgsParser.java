@@ -129,7 +129,7 @@ public final class PgsParser implements SubtitleParser {
     ArrayList<CuesWithTiming> cuesWithTimings = new ArrayList<>();
     ArrayList<CuesWithTiming> displaySetCuesWithTimings = new ArrayList<>();
     while (buffer.bytesLeft() >= 3) {
-      cueBuilder.reset();
+      cueBuilder.resetWithDelayBitmapOn();
       displaySetCuesWithTimings.clear();
       // read whole one display set. the identify section (Presentation Composition Segment)
       // should always exist and return as index 0 item wrapped in CuesWithTiming
@@ -245,6 +245,7 @@ public final class PgsParser implements SubtitleParser {
     private int bitmapWidth;
     private int bitmapHeight;
     private int bitmapId;
+    boolean delayBitmapDrawing;
 
     public CueBuilder() {
       bitmapData = new ParsableByteArray();
@@ -377,7 +378,8 @@ public final class PgsParser implements SubtitleParser {
       PgsObject object = objects.get(bitmapId);
       // Build the cue.
       return object == null ? null : new Cue.Builder()
-          .setBitmapDrawContext(bitmapContext)
+          .setBitmap(delayBitmapDrawing ? null : bitmapContext.draw())
+          .setBitmapDrawContext(delayBitmapDrawing ? bitmapContext : null)
           .setPosition((float) object.positionX / planeWidth)
           .setPositionAnchor(Cue.ANCHOR_TYPE_START)
           .setLine((float) object.positionY / planeHeight, Cue.LINE_TYPE_FRACTION)
@@ -397,6 +399,12 @@ public final class PgsParser implements SubtitleParser {
       colorsSet = false;
       objects = null;
       windows = null;
+      delayBitmapDrawing = false;
+    }
+
+    public void resetWithDelayBitmapOn() {
+      reset();
+      delayBitmapDrawing = true;
     }
 
     private static final class Window {
@@ -443,7 +451,8 @@ public final class PgsParser implements SubtitleParser {
                 (switchBits & 0x40) == 0
                     ? (switchBits & 0x3F)
                     : (((switchBits & 0x3F) << 8) | bitmapData.readUnsignedByte());
-            int color = (switchBits & 0x80) == 0 ? 0 : colors[bitmapData.readUnsignedByte()];
+            int color =
+                (switchBits & 0x80) == 0 ? colors[0] : colors[bitmapData.readUnsignedByte()];
             Arrays.fill(
                 argbBitmapData, argbBitmapDataIndex, argbBitmapDataIndex + runLength, color);
             argbBitmapDataIndex += runLength;
