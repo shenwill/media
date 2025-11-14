@@ -16,6 +16,7 @@ import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator;
 
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /** Parses PGS subtitle data and extracts individual packages into frames. */
 @UnstableApi
@@ -35,7 +36,7 @@ public final class PgsReader implements ElementaryStreamReader {
   private static final int SECTION_TYPE_WINDOW_DEF = 0x17;
   private static final int SECTION_TYPE_END = 0x80;
 
-  private final String language;
+  @Nullable private final String language;
   private @MonotonicNonNull TrackOutput output;
 
   // -1 - expect next section
@@ -53,11 +54,11 @@ public final class PgsReader implements ElementaryStreamReader {
   private int firstByteOfSectionSize;
   private boolean packageGoodToGo;
   private int sigBytesToCheck;
-  private boolean signatureRequired;
+  private final boolean signatureRequired;
   private int sampleBytesWritten;
   private long sampleTimeUs;
 
-  public PgsReader(String language, boolean signatureRequired) {
+  public PgsReader(@Nullable String language, boolean signatureRequired) {
     stateOfReading = -1;
     sectionType = SECTION_NULL;
     sectionBytesToRead = -1;

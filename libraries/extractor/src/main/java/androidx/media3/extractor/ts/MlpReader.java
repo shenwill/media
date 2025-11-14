@@ -74,6 +74,8 @@ public final class MlpReader implements ElementaryStreamReader {
 
     @Nullable public final String mimeType;
 
+    boolean sixteenChannels;
+
     /**
      * The type of the stream if {@link #mimeType} is {@link MimeTypes#AUDIO_TRUEHD}, or {@link
      * #STREAM_TYPE_UNDEFINED} otherwise.
@@ -100,6 +102,7 @@ public final class MlpReader implements ElementaryStreamReader {
 
     private MajorSyncInfo(
         @Nullable String mimeType,
+        boolean sixteenChannels,
         @MajorSyncInfo.StreamType int streamType,
         int channelCount,
         int sampleRate,
@@ -108,6 +111,7 @@ public final class MlpReader implements ElementaryStreamReader {
         int peakBitrate,
         int substreams) {
       this.mimeType = mimeType;
+      this.sixteenChannels = sixteenChannels;
       this.streamType = streamType;
       this.channelCount = channelCount;
       this.sampleRate = sampleRate;
@@ -255,6 +259,7 @@ public final class MlpReader implements ElementaryStreamReader {
     headerBytes.reset(headerBytes.getData(), 0);
     scratchBytes.reset(scratchBytes.getData(), 0);
     trueHdSampleRechunker.reset();
+    timeUsAtFrameStarted = C.TIME_UNSET;
     timeUsFromPes = C.TIME_UNSET;
     ac3Reader.seek();
   }
@@ -494,7 +499,6 @@ public final class MlpReader implements ElementaryStreamReader {
             pesBuffer.getData(), pesBuffer.getPosition(),
             scratchBytes.getData(), scratchBytes.limit(), bytesToCopy);
         scratchBytes.setLimit(scratchBytes.limit() + bytesToCopy);
-        assert scratchBytes.capacity() <= 13;
         pesBuffer.skipBytes(bytesToCopy);
       }
     }
@@ -669,6 +673,8 @@ public final class MlpReader implements ElementaryStreamReader {
         || majorSyncInfo.channelCount != format.channelCount
         || majorSyncInfo.sampleRate != format.sampleRate
         || !Util.areEqual(majorSyncInfo.mimeType, format.sampleMimeType)) {
+      String label = majorSyncInfo.sixteenChannels && majorSyncInfo.substreams >= 4 ?
+          "Dolby Atmos" : null;
       Format.Builder formatBuilder =
           new Format.Builder()
               .setId(formatId)
@@ -676,6 +682,7 @@ public final class MlpReader implements ElementaryStreamReader {
               .setChannelCount(majorSyncInfo.channelCount)
               .setSampleRate(majorSyncInfo.sampleRate)
               .setLanguage(language)
+              .setLabel(label)
               .setPeakBitrate(majorSyncInfo.peakBitrate);
       if (MimeTypes.AUDIO_TRUEHD.equals(majorSyncInfo.mimeType)) {
         formatBuilder.setAverageBitrate(majorSyncInfo.peakBitrate);
@@ -918,8 +925,9 @@ Value Sampling Rate
     int frameSize = toUInt16((byte) (buffer[0] & 0xf), buffer[1]) * 2;
     return new MajorSyncInfo(
         MimeTypes.AUDIO_TRUEHD,
+        sixteenChannels,
         streamType,
-        sixteenChannels ? 16 : channelsThdStream2 > 0 ? channelsThdStream2 : channelsThdStream1,
+        sixteenChannels ? 8 : channelsThdStream2 > 0 ? channelsThdStream2 : channelsThdStream1,
         sampleRate,
         frameSize,
         accessUnitSize,
