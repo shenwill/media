@@ -533,7 +533,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         extractors.add(
             new TsExtractor(
                 TsExtractor.MODE_M2TS,
-                /* defaultTsPayloadReaderFlags= */ 0,
+                DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS,
                 TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES));
         break;
       case FileTypes.WAV:

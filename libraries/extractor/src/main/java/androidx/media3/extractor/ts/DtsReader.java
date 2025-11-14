@@ -16,47 +16,88 @@
 package androidx.media3.extractor.ts;
 
 import static androidx.media3.common.util.Assertions.checkState;
+import static androidx.media3.common.util.Assertions.checkStateNotNull;
 import static java.lang.Math.min;
 
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
-import androidx.media3.common.util.Assertions;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.common.ParserException;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.common.util.Util;
+import androidx.media3.extractor.Ac3Util;
 import androidx.media3.extractor.DtsUtil;
+import androidx.media3.extractor.ExtractorInput;
 import androidx.media3.extractor.ExtractorOutput;
 import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator;
+import com.google.common.primitives.Ints;
+
+import java.io.IOException;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
-/** Parses a continuous DTS byte stream and extracts individual samples. */
+/** Parses a continuous DTS or DTS UHD byte stream and extracts individual samples. */
 @UnstableApi
 public final class DtsReader implements ElementaryStreamReader {
 
   private static final int STATE_FINDING_SYNC = 0;
-  private static final int STATE_READING_HEADER = 1;
-  private static final int STATE_READING_SAMPLE = 2;
+  private static final int STATE_READING_CORE_HEADER = 1;
+  private static final int STATE_FINDING_EXTSS_HEADER_SIZE = 2;
+  private static final int STATE_READING_EXTSS_HEADER = 3;
+  private static final int STATE_FINDING_UHD_HEADER_SIZE = 4;
+  private static final int STATE_READING_UHD_HEADER = 5;
+  private static final int STATE_READING_SAMPLE = 6;
 
-  private static final int HEADER_SIZE = 18;
+  /** Size of core header, in bytes. */
+  private static final int CORE_HEADER_SIZE = 18;
+
+  /**
+   * Maximum possible size of extension sub-stream header, in bytes. See See ETSI TS 102 114 V1.6.1
+   * (2019-08) Section 7.5.2.
+   */
+  /* package */ static final int EXTSS_HEADER_SIZE_MAX = 4096;
+
+  /**
+   * Maximum size of DTS UHD(DTS:X) frame header, in bytes. See ETSI TS 103 491 V1.2.1 (2019-05)
+   * Section 6.4.4.3.
+   */
+  /* package */ static final int FTOC_MAX_HEADER_SIZE = 5408;
 
   private final ParsableByteArray headerScratchBytes;
+
+  /** The chunk ID is read in synchronized frames and re-used in non-synchronized frames. */
+  private final AtomicInteger uhdAudioChunkId;
+
   @Nullable private final String language;
+  private final @C.RoleFlags int roleFlags;
+  private final String containerMimeType;
 
   private @MonotonicNonNull String formatId;
   private @MonotonicNonNull TrackOutput output;
 
+  private final SampleRechunker sampleRechunker;
+
   private int state;
   private int bytesRead;
 
-  // Used to find the header.
+  /** Used to find the header. */
+  private final int streamType;
   private int syncBytes;
+
+  private boolean isSynced;
 
   // Used when parsing the header.
   private long sampleDurationUs;
   private @MonotonicNonNull Format format;
   private int sampleSize;
+  private @DtsUtil.FrameType int frameType;
+  private int extensionSubstreamHeaderSize;
+  private int uhdHeaderSize;
 
   // Used when reading the samples.
   private long timeUs;
@@ -65,20 +106,39 @@ public final class DtsReader implements ElementaryStreamReader {
    * Constructs a new reader for DTS elementary streams.
    *
    * @param language Track language.
+   * @param roleFlags Track role flags.
+   * @param maxHeaderSize Maximum size of the header in a frame.
+   * @param containerMimeType The MIME type of the container holding the stream.
    */
-  public DtsReader(@Nullable String language) {
-    headerScratchBytes = new ParsableByteArray(new byte[HEADER_SIZE]);
+  public DtsReader(
+      int streamType,
+      @Nullable String language,
+      @C.RoleFlags int roleFlags,
+      int maxHeaderSize,
+      String containerMimeType) {
+    headerScratchBytes = new ParsableByteArray(new byte[maxHeaderSize]);
+    isSynced = false;
     state = STATE_FINDING_SYNC;
     timeUs = C.TIME_UNSET;
+    uhdAudioChunkId = new AtomicInteger();
+    extensionSubstreamHeaderSize = C.LENGTH_UNSET;
+    uhdHeaderSize = C.LENGTH_UNSET;
     this.language = language;
+    this.roleFlags = roleFlags;
+    this.containerMimeType = containerMimeType;
+    this.sampleRechunker = new SampleRechunker();
+    this.streamType = streamType;
   }
 
   @Override
   public void seek() {
+    isSynced = false;
     state = STATE_FINDING_SYNC;
     bytesRead = 0;
     syncBytes = 0;
     timeUs = C.TIME_UNSET;
+    uhdAudioChunkId.set(0);
+    sampleRechunker.reset();
   }
 
   @Override
@@ -94,20 +154,72 @@ public final class DtsReader implements ElementaryStreamReader {
   }
 
   @Override
-  public void consume(ParsableByteArray data) {
-    Assertions.checkStateNotNull(output); // Asserts that createTracks has been called.
+  public void consume(ParsableByteArray data) throws ParserException {
+    checkStateNotNull(output); // Asserts that createTracks has been called.
     while (data.bytesLeft() > 0) {
       switch (state) {
         case STATE_FINDING_SYNC:
-          if (skipToNextSync(data)) {
-            state = STATE_READING_HEADER;
+          if (skipToNextSyncWord(data)) {
+            if (frameType == DtsUtil.FRAME_TYPE_UHD_SYNC
+                || frameType == DtsUtil.FRAME_TYPE_UHD_NON_SYNC) {
+              if (frameType == DtsUtil.FRAME_TYPE_UHD_SYNC) {
+                isSynced = true;
+                sampleRechunker.setFoundSyncframe(true, output, null);
+              }
+              if (isSynced) {
+                state = STATE_FINDING_UHD_HEADER_SIZE;
+              }
+            } else if (frameType == DtsUtil.FRAME_TYPE_CORE) {
+              isSynced = true;
+              state = STATE_READING_CORE_HEADER;
+              sampleRechunker.setFoundSyncframe(true, output, null);
+            } else if (isSynced) {
+              state = STATE_FINDING_EXTSS_HEADER_SIZE;
+            }
           }
           break;
-        case STATE_READING_HEADER:
-          if (continueRead(data, headerScratchBytes.getData(), HEADER_SIZE)) {
-            parseHeader();
+        case STATE_READING_CORE_HEADER:
+          if (continueRead(data, headerScratchBytes.getData(), CORE_HEADER_SIZE)) {
+            parseCoreHeader();
             headerScratchBytes.setPosition(0);
-            output.sampleData(headerScratchBytes, HEADER_SIZE);
+            output.sampleData(headerScratchBytes, CORE_HEADER_SIZE);
+            state = STATE_READING_SAMPLE;
+          }
+          break;
+        case STATE_FINDING_EXTSS_HEADER_SIZE:
+          // Read enough bytes to parse the header size information.
+          if (continueRead(data, headerScratchBytes.getData(), /* targetLength= */ 7)) {
+            extensionSubstreamHeaderSize =
+                DtsUtil.parseDtsHdHeaderSize(headerScratchBytes.getData());
+            state = STATE_READING_EXTSS_HEADER;
+          }
+          break;
+        case STATE_READING_EXTSS_HEADER:
+          if (continueRead(data, headerScratchBytes.getData(), extensionSubstreamHeaderSize)) {
+            parseExtensionSubstreamHeader();
+            headerScratchBytes.setPosition(0);
+            output.sampleData(headerScratchBytes, extensionSubstreamHeaderSize);
+            state = STATE_READING_SAMPLE;
+          }
+          break;
+        case STATE_FINDING_UHD_HEADER_SIZE:
+          // Read enough bytes to parse the header size information.
+          if (continueRead(data, headerScratchBytes.getData(), /* targetLength= */ 6)) {
+            uhdHeaderSize = DtsUtil.parseDtsUhdHeaderSize(headerScratchBytes.getData());
+            // Adjust the array read position if data read is more than the actual header size.
+            if (bytesRead > uhdHeaderSize) {
+              int extraBytes = bytesRead - uhdHeaderSize;
+              bytesRead -= extraBytes;
+              data.setPosition(data.getPosition() - extraBytes);
+            }
+            state = STATE_READING_UHD_HEADER;
+          }
+          break;
+        case STATE_READING_UHD_HEADER:
+          if (continueRead(data, headerScratchBytes.getData(), uhdHeaderSize)) {
+            parseUhdHeader();
+            headerScratchBytes.setPosition(0);
+            output.sampleData(headerScratchBytes, uhdHeaderSize);
             state = STATE_READING_SAMPLE;
           }
           break;
@@ -118,7 +230,13 @@ public final class DtsReader implements ElementaryStreamReader {
           if (bytesRead == sampleSize) {
             // packetStarted method must be called before consuming samples.
             checkState(timeUs != C.TIME_UNSET);
-            output.sampleMetadata(timeUs, C.BUFFER_FLAG_KEY_FRAME, sampleSize, 0, null);
+            sampleRechunker.sampleMetadata(
+                output,
+                timeUs,
+                frameType == DtsUtil.FRAME_TYPE_UHD_NON_SYNC ? 0 : C.BUFFER_FLAG_KEY_FRAME,
+                sampleSize,
+                0,
+                null);
             timeUs += sampleDurationUs;
             state = STATE_FINDING_SYNC;
           }
@@ -131,7 +249,9 @@ public final class DtsReader implements ElementaryStreamReader {
 
   @Override
   public void packetFinished(boolean isEndOfInput) {
-    // Do nothing.
+    if (isEndOfInput) {
+      sampleRechunker.outputPendingSampleMetadata(output, null);
+    }
   }
 
   /**
@@ -151,17 +271,18 @@ public final class DtsReader implements ElementaryStreamReader {
   }
 
   /**
-   * Locates the next SYNC value in the buffer, advancing the position to the byte that immediately
-   * follows it. If SYNC was not located, the position is advanced to the limit.
+   * Locates the next SYNC word value in the buffer, advancing the position to the byte that
+   * immediately follows it. If SYNC was not located, the position is advanced to the limit.
    *
    * @param pesBuffer The buffer whose position should be advanced.
-   * @return Whether SYNC was found.
+   * @return Whether SYNC word was found.
    */
-  private boolean skipToNextSync(ParsableByteArray pesBuffer) {
+  private boolean skipToNextSyncWord(ParsableByteArray pesBuffer) {
     while (pesBuffer.bytesLeft() > 0) {
       syncBytes <<= 8;
       syncBytes |= pesBuffer.readUnsignedByte();
-      if (DtsUtil.isSyncWord(syncBytes)) {
+      frameType = DtsUtil.getFrameType(syncBytes);
+      if (frameType != DtsUtil.FRAME_TYPE_UNKNOWN) {
         byte[] headerData = headerScratchBytes.getData();
         headerData[0] = (byte) ((syncBytes >> 24) & 0xFF);
         headerData[1] = (byte) ((syncBytes >> 16) & 0xFF);
@@ -175,19 +296,132 @@ public final class DtsReader implements ElementaryStreamReader {
     return false;
   }
 
-  /** Parses the sample header. */
+  /** Parses the DTS Core Sub-stream header. */
   @RequiresNonNull("output")
-  private void parseHeader() {
+  private void parseCoreHeader() {
     byte[] frameData = headerScratchBytes.getData();
     if (format == null) {
-      format = DtsUtil.parseDtsFormat(frameData, formatId, language, null);
+      format =
+          DtsUtil.parseDtsFormat(frameData, formatId, language, roleFlags, containerMimeType, null);
       output.format(format);
     }
     sampleSize = DtsUtil.getDtsFrameSize(frameData);
     // In this class a sample is an access unit (frame in DTS), but the format's sample rate
     // specifies the number of PCM audio samples per second.
     sampleDurationUs =
-        (int)
-            (C.MICROS_PER_SECOND * DtsUtil.parseDtsAudioSampleCount(frameData) / format.sampleRate);
+        Ints.checkedCast(
+            Util.sampleCountToDurationUs(
+                DtsUtil.parseDtsAudioSampleCount(frameData), format.sampleRate));
+  }
+
+  /** Parses the DTS Extension Sub-stream header. */
+  @RequiresNonNull("output")
+  private void parseExtensionSubstreamHeader() throws ParserException {
+    DtsUtil.DtsHeader dtsHeader = DtsUtil.parseDtsHdHeader(headerScratchBytes.getData());
+    updateFormatWithDtsHeaderInfo(dtsHeader);
+    sampleSize = dtsHeader.frameSize;
+    sampleDurationUs = dtsHeader.frameDurationUs == C.TIME_UNSET ? 0 : dtsHeader.frameDurationUs;
+  }
+
+  /** Parses the UHD frame header. */
+  @RequiresNonNull({"output"})
+  private void parseUhdHeader() throws ParserException {
+    DtsUtil.DtsHeader dtsHeader =
+        DtsUtil.parseDtsUhdHeader(headerScratchBytes.getData(), uhdAudioChunkId);
+    // Format updates will happen only in FTOC sync frames.
+    if (frameType == DtsUtil.FRAME_TYPE_UHD_SYNC) {
+      updateFormatWithDtsHeaderInfo(dtsHeader);
+    }
+    sampleSize = dtsHeader.frameSize;
+    sampleDurationUs = dtsHeader.frameDurationUs == C.TIME_UNSET ? 0 : dtsHeader.frameDurationUs;
+  }
+
+  @RequiresNonNull({"output"})
+  private void updateFormatWithDtsHeaderInfo(DtsUtil.DtsHeader dtsHeader) {
+    if (dtsHeader.sampleRate == C.RATE_UNSET_INT || dtsHeader.channelCount == C.LENGTH_UNSET) {
+      return;
+    }
+    if (format == null
+        || dtsHeader.channelCount != format.channelCount
+        || dtsHeader.sampleRate != format.sampleRate
+        || !Objects.equals(dtsHeader.mimeType, format.sampleMimeType)) {
+      Format.Builder formatBuilder = format == null ? new Format.Builder() : format.buildUpon();
+      String label = streamType == TsExtractor.TS_STREAM_TYPE_DTS_HD_MASTER
+          && dtsHeader.channelCount >= 8 ? "Master Audio + DTS:X?"
+          : streamType == TsExtractor.TS_STREAM_TYPE_DTS_HD_MASTER ? "Master Audio" : null;
+      format =
+          formatBuilder
+              .setId(formatId)
+              .setContainerMimeType(containerMimeType)
+              .setSampleMimeType(dtsHeader.mimeType)
+              .setLabel(label)
+              .setChannelCount(dtsHeader.channelCount)
+              .setSampleRate(dtsHeader.sampleRate)
+              .setLanguage(language)
+              .setRoleFlags(roleFlags)
+              .build();
+      output.format(format);
+    }
+  }
+
+  private static class SampleRechunker {
+
+    private boolean foundSyncframe;
+    private int chunkSampleCount;
+    private long chunkTimeUs;
+    private @C.BufferFlags int chunkFlags;
+    private int chunkSize;
+    private int chunkOffset;
+
+    public void reset() {
+      foundSyncframe = false;
+      chunkSampleCount = 0;
+    }
+
+    public void setFoundSyncframe(
+        boolean value, TrackOutput trackOutput, @Nullable TrackOutput.CryptoData cryptoData) {
+      if (foundSyncframe) {
+        outputPendingSampleMetadata(trackOutput, cryptoData);
+      } else {
+        foundSyncframe = value;
+      }
+    }
+
+    public void sampleMetadata(
+        TrackOutput trackOutput,
+        long timeUs,
+        @C.BufferFlags int flags,
+        int size,
+        int offset,
+        @Nullable TrackOutput.CryptoData cryptoData) {
+      checkState(
+          chunkOffset <= size + offset,
+          "TrueHD chunk samples must be contiguous in the sample queue.");
+      if (!foundSyncframe) {
+        trackOutput.sampleMetadata(
+            timeUs,
+            flags,
+            size,
+            offset,
+            cryptoData);
+        return;
+      }
+      if (chunkSampleCount++ == 0) {
+        // This is the first sample in the chunk.
+        chunkTimeUs = timeUs;
+        chunkFlags = flags;
+        chunkSize = 0;
+      }
+      chunkSize += size;
+      chunkOffset = offset; // The offset is to the end of the sample.
+    }
+
+    public void outputPendingSampleMetadata(
+        TrackOutput trackOutput, @Nullable TrackOutput.CryptoData cryptoData) {
+      if (chunkSampleCount > 0) {
+        trackOutput.sampleMetadata(chunkTimeUs, chunkFlags, chunkSize, chunkOffset, cryptoData);
+        chunkSampleCount = 0;
+      }
+    }
   }
 }

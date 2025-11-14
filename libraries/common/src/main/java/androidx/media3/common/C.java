@@ -30,6 +30,7 @@ import android.media.MediaCodec;
 import android.media.MediaCrypto;
 import android.media.MediaFormat;
 import android.net.Uri;
+import android.opengl.GLES20;
 import android.view.Surface;
 import androidx.annotation.IntDef;
 import androidx.annotation.RequiresApi;
@@ -328,8 +329,8 @@ public final class C {
   /**
    * Stream types for an {@link android.media.AudioTrack}. One of {@link #STREAM_TYPE_ALARM}, {@link
    * #STREAM_TYPE_DTMF}, {@link #STREAM_TYPE_MUSIC}, {@link #STREAM_TYPE_NOTIFICATION}, {@link
-   * #STREAM_TYPE_RING}, {@link #STREAM_TYPE_SYSTEM}, {@link #STREAM_TYPE_VOICE_CALL} or {@link
-   * #STREAM_TYPE_DEFAULT}.
+   * #STREAM_TYPE_RING}, {@link #STREAM_TYPE_SYSTEM}, {@link #STREAM_TYPE_VOICE_CALL}, {@link
+   * #STREAM_TYPE_ACCESSIBILITY} or {@link #STREAM_TYPE_DEFAULT}.
    */
   // @Target list includes both 'default' targets and TYPE_USE, to ensure backwards compatibility
   // with Kotlin usages from before TYPE_USE was added.
@@ -339,14 +340,15 @@ public final class C {
   @Retention(RetentionPolicy.SOURCE)
   @Target({FIELD, METHOD, PARAMETER, LOCAL_VARIABLE, TYPE_USE})
   @IntDef({
-    STREAM_TYPE_ALARM,
-    STREAM_TYPE_DTMF,
-    STREAM_TYPE_MUSIC,
-    STREAM_TYPE_NOTIFICATION,
-    STREAM_TYPE_RING,
-    STREAM_TYPE_SYSTEM,
-    STREAM_TYPE_VOICE_CALL,
-    STREAM_TYPE_DEFAULT
+      STREAM_TYPE_ALARM,
+      STREAM_TYPE_DTMF,
+      STREAM_TYPE_MUSIC,
+      STREAM_TYPE_NOTIFICATION,
+      STREAM_TYPE_RING,
+      STREAM_TYPE_SYSTEM,
+      STREAM_TYPE_VOICE_CALL,
+      STREAM_TYPE_ACCESSIBILITY,
+      STREAM_TYPE_DEFAULT
   })
   public @interface StreamType {}
 
@@ -370,6 +372,10 @@ public final class C {
 
   /** See {@link AudioManager#STREAM_VOICE_CALL}. */
   @UnstableApi public static final int STREAM_TYPE_VOICE_CALL = AudioManager.STREAM_VOICE_CALL;
+
+  /** See {@link AudioManager#STREAM_ACCESSIBILITY}. */
+  @UnstableApi
+  public static final int STREAM_TYPE_ACCESSIBILITY = AudioManager.STREAM_ACCESSIBILITY;
 
   /** The default stream type used by audio renderers. Equal to {@link #STREAM_TYPE_MUSIC}. */
   @UnstableApi public static final int STREAM_TYPE_DEFAULT = STREAM_TYPE_MUSIC;
@@ -613,10 +619,40 @@ public final class C {
   public static final int ALLOW_CAPTURE_BY_SYSTEM = AudioAttributes.ALLOW_CAPTURE_BY_SYSTEM;
 
   /**
-   * Flags which can apply to a buffer containing a media sample. Possible flag values are {@link
-   * #BUFFER_FLAG_KEY_FRAME}, {@link #BUFFER_FLAG_END_OF_STREAM}, {@link #BUFFER_FLAG_FIRST_SAMPLE},
-   * {@link #BUFFER_FLAG_LAST_SAMPLE}, {@link #BUFFER_FLAG_ENCRYPTED} and {@link
-   * #BUFFER_FLAG_DECODE_ONLY}.
+   * Flags which represent a set of video codecs.
+   *
+   * <p>Possible flag values are:
+   *
+   * <ul>
+   *   <li>{@link #VIDEO_CODEC_FLAG_H264}
+   *   <li>{@link #VIDEO_CODEC_FLAG_H265}
+   * </ul>
+   */
+  @UnstableApi
+  @Documented
+  @Retention(RetentionPolicy.SOURCE)
+  @Target(TYPE_USE)
+  @IntDef(
+      flag = true,
+      value = {VIDEO_CODEC_FLAG_H264, VIDEO_CODEC_FLAG_H265})
+  public @interface VideoCodecFlags {}
+
+  @UnstableApi public static final int VIDEO_CODEC_FLAG_H264 = 1;
+  @UnstableApi public static final int VIDEO_CODEC_FLAG_H265 = 2;
+
+  /**
+   * Flags which can apply to a buffer containing a media sample.
+   *
+   * <p>Possible flag values are:
+   *
+   * <ul>
+   *   <li>{@link #BUFFER_FLAG_KEY_FRAME}
+   *   <li>{@link #BUFFER_FLAG_END_OF_STREAM}
+   *   <li>{@link #BUFFER_FLAG_NOT_DEPENDED_ON}
+   *   <li>{@link #BUFFER_FLAG_FIRST_SAMPLE}
+   *   <li>{@link #BUFFER_FLAG_LAST_SAMPLE}
+   *   <li>{@link #BUFFER_FLAG_ENCRYPTED}
+   * </ul>
    */
   @SuppressWarnings("deprecation") // Includes deprecated BUFFER_FLAG_DECODE_ONLY flag.
   @UnstableApi
@@ -642,6 +678,9 @@ public final class C {
   /** Flag for empty buffers that signal that the end of the stream was reached. */
   @UnstableApi
   public static final int BUFFER_FLAG_END_OF_STREAM = MediaCodec.BUFFER_FLAG_END_OF_STREAM;
+
+  /** Indicates that no other buffers depend on the data in this buffer. */
+  @UnstableApi public static final int BUFFER_FLAG_NOT_DEPENDED_ON = 1 << 26; // 0x04000000
 
   /** Indicates that a buffer is known to contain the first media sample of the stream. */
   @UnstableApi public static final int BUFFER_FLAG_FIRST_SAMPLE = 1 << 27; // 0x08000000
@@ -1094,18 +1133,21 @@ public final class C {
   /**
    * The stereo mode for 360/3D/VR videos. One of {@link Format#NO_VALUE}, {@link
    * #STEREO_MODE_MONO}, {@link #STEREO_MODE_TOP_BOTTOM}, {@link #STEREO_MODE_LEFT_RIGHT} or {@link
-   * #STEREO_MODE_STEREO_MESH}.
+   * #STEREO_MODE_STEREO_MESH}, {@link #STEREO_MODE_INTERLEAVED_LEFT_PRIMARY}, {@link
+   * #STEREO_MODE_INTERLEAVED_RIGHT_PRIMARY}.
    */
   @UnstableApi
   @Documented
   @Retention(RetentionPolicy.SOURCE)
   @Target(TYPE_USE)
   @IntDef({
-    Format.NO_VALUE,
-    STEREO_MODE_MONO,
-    STEREO_MODE_TOP_BOTTOM,
-    STEREO_MODE_LEFT_RIGHT,
-    STEREO_MODE_STEREO_MESH
+      Format.NO_VALUE,
+      STEREO_MODE_MONO,
+      STEREO_MODE_TOP_BOTTOM,
+      STEREO_MODE_LEFT_RIGHT,
+      STEREO_MODE_STEREO_MESH,
+      STEREO_MODE_INTERLEAVED_LEFT_PRIMARY,
+      STEREO_MODE_INTERLEAVED_RIGHT_PRIMARY
   })
   public @interface StereoMode {}
 
@@ -1123,6 +1165,18 @@ public final class C {
    * 360/3D/VR videos.
    */
   @UnstableApi public static final int STEREO_MODE_STEREO_MESH = 3;
+
+  /**
+   * Indicates interleaved stereo layout with the left view being the primary view, used with
+   * 360/3D/VR videos.
+   */
+  @UnstableApi public static final int STEREO_MODE_INTERLEAVED_LEFT_PRIMARY = 4;
+
+  /**
+   * Indicates interleaved stereo layout with the right view being the primary view, used with
+   * 360/3D/VR videos.
+   */
+  @UnstableApi public static final int STEREO_MODE_INTERLEAVED_RIGHT_PRIMARY = 5;
 
   // LINT.IfChange(color_space)
   /**
@@ -1367,21 +1421,22 @@ public final class C {
   @IntDef(
       flag = true,
       value = {
-        ROLE_FLAG_MAIN,
-        ROLE_FLAG_ALTERNATE,
-        ROLE_FLAG_SUPPLEMENTARY,
-        ROLE_FLAG_COMMENTARY,
-        ROLE_FLAG_DUB,
-        ROLE_FLAG_EMERGENCY,
-        ROLE_FLAG_CAPTION,
-        ROLE_FLAG_SUBTITLE,
-        ROLE_FLAG_SIGN,
-        ROLE_FLAG_DESCRIBES_VIDEO,
-        ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND,
-        ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY,
-        ROLE_FLAG_TRANSCRIBES_DIALOG,
-        ROLE_FLAG_EASY_TO_READ,
-        ROLE_FLAG_TRICK_PLAY
+          ROLE_FLAG_MAIN,
+          ROLE_FLAG_ALTERNATE,
+          ROLE_FLAG_SUPPLEMENTARY,
+          ROLE_FLAG_COMMENTARY,
+          ROLE_FLAG_DUB,
+          ROLE_FLAG_EMERGENCY,
+          ROLE_FLAG_CAPTION,
+          ROLE_FLAG_SUBTITLE,
+          ROLE_FLAG_SIGN,
+          ROLE_FLAG_DESCRIBES_VIDEO,
+          ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND,
+          ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY,
+          ROLE_FLAG_TRANSCRIBES_DIALOG,
+          ROLE_FLAG_EASY_TO_READ,
+          ROLE_FLAG_TRICK_PLAY,
+          ROLE_FLAG_AUXILIARY
       })
   public @interface RoleFlags {}
 
@@ -1447,6 +1502,62 @@ public final class C {
   public static final int ROLE_FLAG_TRICK_PLAY = 1 << 14;
 
   /**
+   * Indicates an auxiliary track. An auxiliary track provides additional information about other
+   * tracks and is generally not meant for stand-alone playback, but rather for further processing
+   * in conjunction with other tracks (for example, a track with depth information).
+   */
+  public static final int ROLE_FLAG_AUXILIARY = 1 << 15;
+
+  // LINT.ThenChange("util/Util.java:role_flags")
+
+  /**
+   * {@linkplain #ROLE_FLAG_AUXILIARY Auxiliary track types}. One of {@link
+   * #AUXILIARY_TRACK_TYPE_UNDEFINED}, {@link #AUXILIARY_TRACK_TYPE_ORIGINAL}, {@link
+   * #AUXILIARY_TRACK_TYPE_DEPTH_LINEAR}, {@link #AUXILIARY_TRACK_TYPE_DEPTH_INVERSE}, {@link
+   * #AUXILIARY_TRACK_TYPE_DEPTH_METADATA}.
+   */
+  @UnstableApi
+  @Documented
+  @Retention(RetentionPolicy.SOURCE)
+  @Target({FIELD, METHOD, PARAMETER, LOCAL_VARIABLE, TYPE_USE})
+  @IntDef({
+      AUXILIARY_TRACK_TYPE_UNDEFINED,
+      AUXILIARY_TRACK_TYPE_ORIGINAL,
+      AUXILIARY_TRACK_TYPE_DEPTH_LINEAR,
+      AUXILIARY_TRACK_TYPE_DEPTH_INVERSE,
+      AUXILIARY_TRACK_TYPE_DEPTH_METADATA
+  })
+  public @interface AuxiliaryTrackType {}
+
+  // LINT.IfChange(auxiliary_track_type)
+  /** Not an auxiliary track or an auxiliary track with an undefined type. */
+  @UnstableApi public static final int AUXILIARY_TRACK_TYPE_UNDEFINED = 0;
+
+  /** The original video track without any depth based effects applied. */
+  @UnstableApi public static final int AUXILIARY_TRACK_TYPE_ORIGINAL = 1;
+
+  /**
+   * A linear encoded depth video track.
+   *
+   * <p>See https://developer.android.com/static/media/camera/camera2/Dynamic-depth-v1.0.pdf for
+   * linear depth encoding.
+   */
+  @UnstableApi public static final int AUXILIARY_TRACK_TYPE_DEPTH_LINEAR = 2;
+
+  /**
+   * An inverse encoded depth video track.
+   *
+   * <p>See https://developer.android.com/static/media/camera/camera2/Dynamic-depth-v1.0.pdf for
+   * inverse depth encoding.
+   */
+  @UnstableApi public static final int AUXILIARY_TRACK_TYPE_DEPTH_INVERSE = 3;
+
+  /** A timed metadata of depth video track. */
+  @UnstableApi public static final int AUXILIARY_TRACK_TYPE_DEPTH_METADATA = 4;
+
+  // LINT.ThenChange("util/Util.java:auxiliary_track_type")
+
+  /**
    * Level of support for a format. One of {@link #FORMAT_HANDLED}, {@link
    * #FORMAT_EXCEEDS_CAPABILITIES}, {@link #FORMAT_UNSUPPORTED_DRM}, {@link
    * #FORMAT_UNSUPPORTED_SUBTYPE} or {@link #FORMAT_UNSUPPORTED_TYPE}.
@@ -1492,17 +1603,24 @@ public final class C {
   @UnstableApi public static final int FORMAT_UNSUPPORTED_DRM = 0b010;
 
   /**
-   * Formats with the same top-level type are generally supported, but not this format or any other
-   * format with the same MIME type because the sub-type is not supported.
+   * Formats with the same type of media (e.g. video, audio, image or text) are generally supported,
+   * but not this format.
    *
-   * <p>Example: The player supports audio and the format's MIME type matches audio/[subtype], but
-   * there does not exist a suitable decoder for [subtype].
+   * <p>Example: The player supports audio and the format's {@linkplain MimeTypes#isAudio(String)
+   * MIME type is for audio}, but there does not exist a suitable decoder for this format's MIME
+   * type.
+   *
+   * @see MimeTypes#isAudio(String)
+   * @see MimeTypes#isVideo(String)
+   * @see MimeTypes#isImage(String)
+   * @see MimeTypes#isText(String)
    */
   @UnstableApi public static final int FORMAT_UNSUPPORTED_SUBTYPE = 0b001;
 
   /**
-   * The format is unsupported, because no formats with the same top-level type are supported or
-   * there is only specialized support for different MIME types of the same top-level type.
+   * The format is unsupported, because no formats with the same type of media (e.g. video, audio,
+   * image or text) are supported or there is only specialized support for different MIME types of
+   * the same type.
    *
    * <p>Example 1: The player is a general purpose audio player, but the format has a video MIME
    * type.
@@ -1546,6 +1664,40 @@ public final class C {
 
   /** The first frame was rendered. */
   @UnstableApi public static final int FIRST_FRAME_RENDERED = 3;
+
+  /**
+   * Texture filtering algorithm for minification.
+   *
+   * <p>Possible values are:
+   *
+   * <ul>
+   *   <li>{@link #TEXTURE_MIN_FILTER_LINEAR}
+   *   <li>{@link #TEXTURE_MIN_FILTER_LINEAR_MIPMAP_LINEAR}
+   * </ul>
+   *
+   * <p>The algorithms are ordered by increasing visual quality and computational cost.
+   */
+  @UnstableApi
+  @Documented
+  @Retention(RetentionPolicy.SOURCE)
+  @Target(TYPE_USE)
+  @IntDef({TEXTURE_MIN_FILTER_LINEAR, TEXTURE_MIN_FILTER_LINEAR_MIPMAP_LINEAR})
+  public @interface TextureMinFilter {}
+
+  /**
+   * Returns the weighted average of the four texture elements that are closest to the specified
+   * texture coordinates.
+   */
+  @UnstableApi public static final int TEXTURE_MIN_FILTER_LINEAR = GLES20.GL_LINEAR;
+
+  /**
+   * Chooses the two mipmaps that most closely match the size of the pixel being textured and uses
+   * the {@link C#TEXTURE_MIN_FILTER_LINEAR} criterion (a weighted average of the texture elements
+   * that are closest to the specified texture coordinates) to produce a texture value from each
+   * mipmap. The final texture value is a weighted average of those two values.
+   */
+  @UnstableApi
+  public static final int TEXTURE_MIN_FILTER_LINEAR_MIPMAP_LINEAR = GLES20.GL_LINEAR_MIPMAP_LINEAR;
 
   /**
    * @deprecated Use {@link Util#usToMs(long)}.

@@ -250,12 +250,12 @@ public final class TsExtractorTest {
 
     @Override
     @Nullable
-    public TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo) {
+    public TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo, int mode) {
       if (provideCustomEsReader && streamType == 3) {
         esReader = new CustomEsReader(esInfo.language);
         return new PesReader(esReader);
       } else {
-        return defaultFactory.createPayloadReader(streamType, esInfo);
+        return defaultFactory.createPayloadReader(streamType, esInfo, mode);
       }
     }
   }

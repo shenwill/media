@@ -147,7 +147,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
 
   @Override
   @Nullable
-  public TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo) {
+  public TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo, int mode) {
     switch (streamType) {
       case TsExtractor.TS_STREAM_TYPE_MPA:
       case TsExtractor.TS_STREAM_TYPE_MPA_LSF:
@@ -173,10 +173,29 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         }
         // Fall through.
       case TsExtractor.TS_STREAM_TYPE_DTS:
-        return new PesReader(new DtsReader(esInfo.language));
+      case TsExtractor.TS_STREAM_TYPE_DTS_HD:
+      case TsExtractor.TS_STREAM_TYPE_DTS_HD_2:
+        return new PesReader(
+            new DtsReader(
+                streamType,
+                esInfo.language,
+                esInfo.getRoleFlags(),
+                DtsReader.EXTSS_HEADER_SIZE_MAX,
+                MimeTypes.VIDEO_MP2T));
+      case TsExtractor.TS_STREAM_TYPE_DTS_UHD:
+        return new PesReader(
+            new DtsReader(
+                streamType,
+                esInfo.language,
+                esInfo.getRoleFlags(),
+                DtsReader.FTOC_MAX_HEADER_SIZE,
+                MimeTypes.VIDEO_MP2T));
       case TsExtractor.TS_STREAM_TYPE_H262:
-      case TsExtractor.TS_STREAM_TYPE_DC2_H262:
-        return new PesReader(new H262Reader(buildUserDataReader(esInfo)));
+      case TsExtractor.TS_STREAM_TYPE_DC2_H262_OR_BLU_RAY_PCM_AUDIO:
+        return streamType == TsExtractor.TS_STREAM_TYPE_DC2_H262_OR_BLU_RAY_PCM_AUDIO
+            && mode == TsExtractor.MODE_M2TS
+            ? new PesReader(new LpcmReader(esInfo.language))
+            : new PesReader(new H262Reader(buildUserDataReader(esInfo)));
       case TsExtractor.TS_STREAM_TYPE_H263:
         return new PesReader(new H263Reader(buildUserDataReader(esInfo)));
       case TsExtractor.TS_STREAM_TYPE_H264:
@@ -189,7 +208,16 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
                     isSet(FLAG_DETECT_ACCESS_UNITS)));
       case TsExtractor.TS_STREAM_TYPE_H265:
         return new PesReader(new H265Reader(buildSeiReader(esInfo)));
-      case TsExtractor.TS_STREAM_TYPE_SPLICE_INFO:
+      case TsExtractor.TS_STREAM_TYPE_SPLICE_INFO_OR_BLU_RAY_DTS_HD_MA:
+        if (mode == TsExtractor.MODE_M2TS) {
+          return new PesReader(
+              new DtsReader(
+                  streamType,
+                  esInfo.language,
+                  esInfo.getRoleFlags(),
+                  DtsReader.FTOC_MAX_HEADER_SIZE,
+                  MimeTypes.VIDEO_MP2T));
+        }
         return isSet(FLAG_IGNORE_SPLICE_INFO_STREAM)
             ? null
             : new SectionReader(new PassthroughSectionPayloadReader(MimeTypes.APPLICATION_SCTE35));
@@ -212,7 +240,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
    * SeiReader} for the declared formats, or {@link #closedCaptionFormats} if the descriptor is not
    * present.
    *
-   * @param esInfo The {@link EsInfo} passed to {@link #createPayloadReader(int, EsInfo)}.
+   * @param esInfo The {@link EsInfo} passed to {@link #createPayloadReader(int, EsInfo, int)}.
    * @return A {@link SeiReader} for closed caption tracks.
    */
   private SeiReader buildSeiReader(EsInfo esInfo) {
@@ -225,7 +253,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
    * {@link UserDataReader} for the declared formats, or {@link #closedCaptionFormats} if the
    * descriptor is not present.
    *
-   * @param esInfo The {@link EsInfo} passed to {@link #createPayloadReader(int, EsInfo)}.
+   * @param esInfo The {@link EsInfo} passed to {@link #createPayloadReader(int, EsInfo, int)}.
    * @return A {@link UserDataReader} for closed caption tracks.
    */
   private UserDataReader buildUserDataReader(EsInfo esInfo) {
@@ -238,7 +266,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
    * List<Format>} for the declared formats, or {@link #closedCaptionFormats} if the descriptor is
    * not present.
    *
-   * @param esInfo The {@link EsInfo} passed to {@link #createPayloadReader(int, EsInfo)}.
+   * @param esInfo The {@link EsInfo} passed to {@link #createPayloadReader(int, EsInfo, int)}.
    * @return A {@link List<Format>} containing list of closed caption formats.
    */
   private List<Format> getClosedCaptionFormats(EsInfo esInfo) {

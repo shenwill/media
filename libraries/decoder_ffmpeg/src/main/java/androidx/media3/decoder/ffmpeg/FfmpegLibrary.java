@@ -133,7 +133,9 @@ public final class FfmpegLibrary {
       case MimeTypes.AUDIO_TRUEHD:
         return "truehd";
       case MimeTypes.AUDIO_DTS:
+      case MimeTypes.AUDIO_DTS_EXPRESS:
       case MimeTypes.AUDIO_DTS_HD:
+      case MimeTypes.AUDIO_DTS_X:
         return "dca";
       case MimeTypes.AUDIO_VORBIS:
         return "vorbis";

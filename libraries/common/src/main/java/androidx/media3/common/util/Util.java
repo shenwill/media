@@ -32,6 +32,7 @@ import static androidx.media3.common.util.Assertions.checkNotNull;
 import static java.lang.Math.abs;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 import android.Manifest.permission;
 import android.annotation.SuppressLint;
@@ -41,6 +42,7 @@ import android.app.Service;
 import android.app.UiModeManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -74,6 +76,7 @@ import android.util.SparseLongArray;
 import android.view.Display;
 import android.view.SurfaceView;
 import android.view.WindowManager;
+
 import androidx.annotation.ChecksSdkIntAtLeast;
 import androidx.annotation.DoNotInline;
 import androidx.annotation.DrawableRes;
@@ -90,15 +93,26 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.Player.Commands;
 import androidx.media3.common.audio.AudioProcessor;
+
 import com.google.common.base.Ascii;
 import com.google.common.base.Charsets;
+import com.google.common.io.ByteStreams;
 import com.google.common.math.DoubleMath;
 import com.google.common.math.LongMath;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.UnsignedBytes;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
+import com.google.errorprone.annotations.InlineMe;
+
+import org.checkerframework.checker.initialization.qual.UnknownInitialization;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
+import org.checkerframework.checker.nullness.qual.PolyNull;
+
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -121,6 +135,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.MissingResourceException;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
@@ -133,10 +148,6 @@ import java.util.regex.Pattern;
 import java.util.zip.DataFormatException;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.Inflater;
-import org.checkerframework.checker.initialization.qual.UnknownInitialization;
-import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
-import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
-import org.checkerframework.checker.nullness.qual.PolyNull;
 
 /** Miscellaneous utility methods. */
 public final class Util {
@@ -211,38 +222,25 @@ public final class Util {
    */
   @UnstableApi
   public static byte[] toByteArray(InputStream inputStream) throws IOException {
-    byte[] buffer = new byte[1024 * 4];
-    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-    int bytesRead;
-    while ((bytesRead = inputStream.read(buffer)) != -1) {
-      outputStream.write(buffer, 0, bytesRead);
-    }
-    return outputStream.toByteArray();
-  }
-
-  /** Converts an integer into an equivalent byte array. */
-  @UnstableApi
-  public static byte[] toByteArray(int value) {
-    return new byte[] {
-      (byte) (value >> 24), (byte) (value >> 16), (byte) (value >> 8), (byte) value
-    };
+    return ByteStreams.toByteArray(inputStream);
   }
 
   /**
    * Converts an array of integers into an equivalent byte array.
    *
    * <p>Each integer is converted into 4 sequential bytes.
+   *
+   * <p>For a single integer, prefer Guava's {@link Ints#toByteArray(int)} implementation.
    */
   @UnstableApi
   public static byte[] toByteArray(int... values) {
     byte[] array = new byte[values.length * 4];
     int index = 0;
     for (int value : values) {
-      byte[] byteArray = toByteArray(value);
-      array[index++] = byteArray[0];
-      array[index++] = byteArray[1];
-      array[index++] = byteArray[2];
-      array[index++] = byteArray[3];
+      array[index++] = (byte) (value >> 24);
+      array[index++] = (byte) (value >> 16);
+      array[index++] = (byte) (value >> 8);
+      array[index++] = (byte) (value);
     }
     return array;
   }
@@ -250,29 +248,13 @@ public final class Util {
   /** Converts a float into an equivalent byte array. */
   @UnstableApi
   public static byte[] toByteArray(float value) {
-    return toByteArray(Float.floatToIntBits(value));
-  }
-
-  /** Converts a byte array into a float. */
-  @UnstableApi
-  public static float toFloat(byte[] bytes) {
-    checkArgument(bytes.length == 4);
-    int intBits =
-        bytes[0] << 24 | (bytes[1] & 0xFF) << 16 | (bytes[2] & 0xFF) << 8 | (bytes[3] & 0xFF);
-    return Float.intBitsToFloat(intBits);
-  }
-
-  /** Converts a byte array into an integer. */
-  @UnstableApi
-  public static int toInteger(byte[] bytes) {
-    checkArgument(bytes.length == 4);
-    return bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3];
+    return Ints.toByteArray(Float.floatToIntBits(value));
   }
 
   /**
    * Registers a {@link BroadcastReceiver} that's not intended to receive broadcasts from other
    * apps. This will be enforced by specifying {@link Context#RECEIVER_NOT_EXPORTED} if {@link
-   * #SDK_INT} is 33 or above.
+   * Build.VERSION#SDK_INT} is 33 or above.
    *
    * <p>Do not use this method if registering a receiver for a <a
    * href="https://android.googlesource.com/platform/frameworks/base/+/master/core/res/AndroidManifest.xml">protected
@@ -287,7 +269,7 @@ public final class Util {
   @Nullable
   public static Intent registerReceiverNotExported(
       Context context, @Nullable BroadcastReceiver receiver, IntentFilter filter) {
-    if (SDK_INT < 33) {
+    if (Build.VERSION.SDK_INT < 33) {
       return context.registerReceiver(receiver, filter);
     } else {
       return context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -295,8 +277,8 @@ public final class Util {
   }
 
   /**
-   * Calls {@link Context#startForegroundService(Intent)} if {@link #SDK_INT} is 26 or higher, or
-   * {@link Context#startService(Intent)} otherwise.
+   * Calls {@link Context#startForegroundService(Intent)} if {@link Build.VERSION#SDK_INT} is 26 or
+   * higher, or {@link Context#startService(Intent)} otherwise.
    *
    * @param context The context to call.
    * @param intent The intent to pass to the called method.
@@ -305,7 +287,7 @@ public final class Util {
   @UnstableApi
   @Nullable
   public static ComponentName startForegroundService(Context context, Intent intent) {
-    if (SDK_INT >= 26) {
+    if (Build.VERSION.SDK_INT >= 26) {
       return context.startForegroundService(intent);
     } else {
       return context.startService(intent);
@@ -330,7 +312,7 @@ public final class Util {
       Notification notification,
       int foregroundServiceType,
       String foregroundServiceManifestType) {
-    if (Util.SDK_INT >= 29) {
+    if (Build.VERSION.SDK_INT >= 29) {
       Api29.startForeground(
           service,
           notificationId,
@@ -375,7 +357,7 @@ public final class Util {
    */
   public static boolean maybeRequestReadStoragePermission(
       Activity activity, MediaItem... mediaItems) {
-    if (SDK_INT < 23) {
+    if (Build.VERSION.SDK_INT < 23) {
       return false;
     }
     for (MediaItem mediaItem : mediaItems) {
@@ -400,7 +382,7 @@ public final class Util {
     if (!isReadStoragePermissionRequestNeeded(activity, uri)) {
       return false;
     }
-    if (SDK_INT < 33) {
+    if (Build.VERSION.SDK_INT < 33) {
       return requestExternalStoragePermission(activity);
     } else {
       return requestReadMediaPermissions(activity);
@@ -409,7 +391,7 @@ public final class Util {
 
   @ChecksSdkIntAtLeast(api = 23)
   private static boolean isReadStoragePermissionRequestNeeded(Activity activity, Uri uri) {
-    if (SDK_INT < 23) {
+    if (Build.VERSION.SDK_INT < 23) {
       // Permission automatically granted via manifest below API 23.
       return false;
     }
@@ -443,7 +425,8 @@ public final class Util {
   }
 
   private static boolean isMediaStoreExternalContentUri(Uri uri) {
-    if (!"content".equals(uri.getScheme()) || !MediaStore.AUTHORITY.equals(uri.getAuthority())) {
+    if (!Objects.equals(uri.getScheme(), ContentResolver.SCHEME_CONTENT)
+        || !Objects.equals(uri.getAuthority(), MediaStore.AUTHORITY)) {
       return false;
     }
     List<String> pathSegments = uri.getPathSegments();
@@ -463,7 +446,7 @@ public final class Util {
    * @return Whether it may be possible to load the URIs of the given media items.
    */
   public static boolean checkCleartextTrafficPermitted(MediaItem... mediaItems) {
-    if (SDK_INT < 24) {
+    if (Build.VERSION.SDK_INT < 24) {
       // We assume cleartext traffic is permitted.
       return true;
     }
@@ -491,29 +474,87 @@ public final class Util {
   @UnstableApi
   public static boolean isLocalFileUri(Uri uri) {
     String scheme = uri.getScheme();
-    return TextUtils.isEmpty(scheme) || "file".equals(scheme);
+    return TextUtils.isEmpty(scheme) || Objects.equals(scheme, ContentResolver.SCHEME_FILE);
   }
 
   /** Returns true if the code path is currently running on an emulator. */
   @UnstableApi
   public static boolean isRunningOnEmulator() {
-    String deviceName = Ascii.toLowerCase(Util.DEVICE);
+    String deviceName = Ascii.toLowerCase(Build.DEVICE);
     return deviceName.contains("emulator")
         || deviceName.contains("emu64a")
+        || deviceName.contains("emu64x")
         || deviceName.contains("generic");
   }
 
   /**
-   * Tests two objects for {@link Object#equals(Object)} equality, handling the case where one or
-   * both may be null.
-   *
-   * @param o1 The first object.
-   * @param o2 The second object.
-   * @return {@code o1 == null ? o2 == null : o1.equals(o2)}.
+   * @deprecated Use {@link Objects#equals(Object, Object)} instead.
    */
   @UnstableApi
+  @Deprecated
+  @InlineMe(
+      replacement = "Objects.equals(o1, o2)",
+      imports = {"java.util.Objects"})
   public static boolean areEqual(@Nullable Object o1, @Nullable Object o2) {
-    return o1 == null ? o2 == null : o1.equals(o2);
+    return Objects.equals(o1, o2);
+  }
+
+  /**
+   * Tests two {@link SparseArray} instances for content equality, handling the case where one or
+   * both may be {@code null}.
+   *
+   * @see SparseArray#contentEquals(SparseArray)
+   * @param sparseArray1 The first {@link SparseArray} instance.
+   * @param sparseArray2 The second {@link SparseArray} instance.
+   * @return True if the two {@link SparseArray} instances are equal in contents.
+   */
+  @UnstableApi
+  public static <T> boolean contentEquals(
+      @Nullable SparseArray<T> sparseArray1, @Nullable SparseArray<T> sparseArray2) {
+    if (sparseArray1 == null) {
+      return sparseArray2 == null;
+    } else if (sparseArray2 == null) {
+      return false;
+    }
+
+    if (Build.VERSION.SDK_INT >= 31) {
+      return sparseArray1.contentEquals(sparseArray2);
+    }
+
+    int size = sparseArray1.size();
+    if (size != sparseArray2.size()) {
+      return false;
+    }
+
+    for (int index = 0; index < size; index++) {
+      int key = sparseArray1.keyAt(index);
+      if (!Objects.equals(sparseArray1.valueAt(index), sparseArray2.get(key))) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Returns a hash code value for the contents of this {@link SparseArray}, combining the {@link
+   * Objects#hashCode(Object)} result of all its keys and values.
+   *
+   * @see SparseArray#contentHashCode()
+   * @param sparseArray The {@link SparseArray} instance.
+   * @return The hash code.
+   */
+  @UnstableApi
+  public static <T> int contentHashCode(SparseArray<T> sparseArray) {
+    if (Build.VERSION.SDK_INT >= 31) {
+      return sparseArray.contentHashCode();
+    }
+    int hash = 17;
+    for (int index = 0; index < sparseArray.size(); index++) {
+      hash = 31 * hash + sparseArray.keyAt(index);
+      hash = 31 * hash + Objects.hashCode(sparseArray.valueAt(index));
+    }
+    return hash;
   }
 
   /**
@@ -529,7 +570,7 @@ public final class Util {
   @UnstableApi
   public static boolean contains(@NullableType Object[] items, @Nullable Object item) {
     for (Object arrayItem : items) {
-      if (areEqual(arrayItem, item)) {
+      if (Objects.equals(arrayItem, item)) {
         return true;
       }
     }
@@ -761,7 +802,7 @@ public final class Util {
     if (!looper.getThread().isAlive()) {
       return false;
     }
-    if (handler.getLooper() == Looper.myLooper()) {
+    if (looper == Looper.myLooper()) {
       runnable.run();
       return true;
     } else {
@@ -1000,7 +1041,7 @@ public final class Util {
     @Nullable InputStream inputStream = null;
     try {
       inputStream = context.getAssets().open(assetPath);
-      return Util.fromUtf8Bytes(Util.toByteArray(inputStream));
+      return Util.fromUtf8Bytes(ByteStreams.toByteArray(inputStream));
     } finally {
       Util.closeQuietly(inputStream);
     }
@@ -1188,6 +1229,33 @@ public final class Util {
       return overflowResult;
     }
     return result;
+  }
+
+  /**
+   * Returns the integer percentage of {@code numerator} divided by {@code denominator}. This uses
+   * integer arithmetic (round down).
+   */
+  @UnstableApi
+  public static int percentInt(long numerator, long denominator) {
+    long numeratorTimes100 = LongMath.saturatedMultiply(numerator, 100);
+    long result =
+        numeratorTimes100 != Long.MAX_VALUE && numeratorTimes100 != Long.MIN_VALUE
+            ? numeratorTimes100 / denominator
+            : (numerator / (denominator / 100));
+    return Ints.checkedCast(result);
+  }
+
+  /**
+   * Returns the floating point percentage of {@code numerator} divided by {@code denominator}. Note
+   * that this may return {@link Float#POSITIVE_INFINITY}, {@link Float#NEGATIVE_INFINITY} or {@link
+   * Float#NaN} if the denominator is zero.
+   */
+  @UnstableApi
+  public static float percentFloat(long numerator, long denominator) {
+    if (denominator != 0 && numerator == denominator) {
+      return 100f;
+    }
+    return ((float) numerator / denominator) * 100;
   }
 
   /**
@@ -1480,6 +1548,17 @@ public final class Util {
     return stayInBounds ? min(list.size() - 1, index) : index;
   }
 
+  /** Returns whether {@code values} is sorted in ascending order. */
+  @UnstableApi
+  public static boolean isSorted(long[] values) {
+    for (int i = 0; i < values.length - 1; i++) {
+      if (values[i] > values[i + 1]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /**
    * Compares two long values and returns the same value as {@code Long.compare(long, long)}.
    *
@@ -1490,7 +1569,7 @@ public final class Util {
    */
   @UnstableApi
   public static int compareLong(long left, long right) {
-    return left < right ? -1 : left == right ? 0 : 1;
+    return Long.compare(left, right);
   }
 
   /**
@@ -1571,7 +1650,7 @@ public final class Util {
    */
   @UnstableApi
   public static long sampleCountToDurationUs(long sampleCount, int sampleRate) {
-    return scaleLargeValue(sampleCount, C.MICROS_PER_SECOND, sampleRate, RoundingMode.FLOOR);
+    return scaleLargeValue(sampleCount, C.MICROS_PER_SECOND, sampleRate, RoundingMode.DOWN);
   }
 
   /**
@@ -1588,7 +1667,7 @@ public final class Util {
    */
   @UnstableApi
   public static long durationUsToSampleCount(long durationUs, int sampleRate) {
-    return scaleLargeValue(durationUs, sampleRate, C.MICROS_PER_SECOND, RoundingMode.CEILING);
+    return scaleLargeValue(durationUs, sampleRate, C.MICROS_PER_SECOND, RoundingMode.UP);
   }
 
   /**
@@ -1873,16 +1952,18 @@ public final class Util {
    * Scales a large timestamp.
    *
    * <p>Equivalent to {@link #scaleLargeValue(long, long, long, RoundingMode)} with {@link
-   * RoundingMode#FLOOR}.
+   * RoundingMode#DOWN}.
    *
    * @param timestamp The timestamp to scale.
    * @param multiplier The multiplier.
    * @param divisor The divisor.
    * @return The scaled timestamp.
    */
+  // TODO: b/372204124 - Consider switching this (and impls below) to HALF_UP rounding to reduce
+  //   round-trip errors when switching between time bases with different resolutions.
   @UnstableApi
   public static long scaleLargeTimestamp(long timestamp, long multiplier, long divisor) {
-    return scaleLargeValue(timestamp, multiplier, divisor, RoundingMode.FLOOR);
+    return scaleLargeValue(timestamp, multiplier, divisor, RoundingMode.DOWN);
   }
 
   /**
@@ -1895,7 +1976,7 @@ public final class Util {
    */
   @UnstableApi
   public static long[] scaleLargeTimestamps(List<Long> timestamps, long multiplier, long divisor) {
-    return scaleLargeValues(timestamps, multiplier, divisor, RoundingMode.FLOOR);
+    return scaleLargeValues(timestamps, multiplier, divisor, RoundingMode.DOWN);
   }
 
   /**
@@ -1907,7 +1988,7 @@ public final class Util {
    */
   @UnstableApi
   public static void scaleLargeTimestampsInPlace(long[] timestamps, long multiplier, long divisor) {
-    scaleLargeValuesInPlace(timestamps, multiplier, divisor, RoundingMode.FLOOR);
+    scaleLargeValuesInPlace(timestamps, multiplier, divisor, RoundingMode.DOWN);
   }
 
   /**
@@ -2143,7 +2224,7 @@ public final class Util {
   }
 
   /**
-   * Converts a sample bit depth to a corresponding PCM encoding constant.
+   * Converts a sample bit depth to a corresponding little-endian integer PCM encoding constant.
    *
    * @param bitDepth The bit depth. Supported values are 8, 16, 24 and 32.
    * @return The corresponding encoding. One of {@link C#ENCODING_PCM_8BIT}, {@link
@@ -2152,15 +2233,35 @@ public final class Util {
    */
   @UnstableApi
   public static @C.PcmEncoding int getPcmEncoding(int bitDepth) {
+    return getPcmEncoding(bitDepth, LITTLE_ENDIAN);
+  }
+
+  /**
+   * Converts a sample bit depth and byte order to a corresponding integer PCM encoding constant.
+   *
+   * @param bitDepth The bit depth. Supported values are 8, 16, 24 and 32.
+   * @param byteOrder The byte order.
+   * @return The corresponding integer PCM encoding. If the bit depth is unsupported then {@link
+   *     C#ENCODING_INVALID} is returned.
+   */
+  @UnstableApi
+  public static @C.PcmEncoding int getPcmEncoding(int bitDepth, ByteOrder byteOrder) {
     switch (bitDepth) {
       case 8:
+        // Byte order has no effect for single-byte encodings.
         return C.ENCODING_PCM_8BIT;
       case 16:
-        return C.ENCODING_PCM_16BIT;
+        return byteOrder.equals(LITTLE_ENDIAN)
+            ? C.ENCODING_PCM_16BIT
+            : C.ENCODING_PCM_16BIT_BIG_ENDIAN;
       case 24:
-        return C.ENCODING_PCM_24BIT;
+        return byteOrder.equals(LITTLE_ENDIAN)
+            ? C.ENCODING_PCM_24BIT
+            : C.ENCODING_PCM_24BIT_BIG_ENDIAN;
       case 32:
-        return C.ENCODING_PCM_32BIT;
+        return byteOrder.equals(LITTLE_ENDIAN)
+            ? C.ENCODING_PCM_32BIT
+            : C.ENCODING_PCM_32BIT_BIG_ENDIAN;
       default:
         return C.ENCODING_INVALID;
     }
@@ -2243,7 +2344,7 @@ public final class Util {
       case 8:
         return AudioFormat.CHANNEL_OUT_7POINT1_SURROUND;
       case 10:
-        if (Util.SDK_INT >= 32) {
+        if (Build.VERSION.SDK_INT >= 32) {
           return AudioFormat.CHANNEL_OUT_5POINT1POINT4;
         } else {
           // Before API 32, height channel masks are not available. For those 10-channel streams
@@ -2252,6 +2353,24 @@ public final class Util {
         }
       case 12:
         return AudioFormat.CHANNEL_OUT_7POINT1POINT4;
+      case 24:
+        if (Build.VERSION.SDK_INT >= 32) {
+          return AudioFormat.CHANNEL_OUT_7POINT1POINT4
+              | AudioFormat.CHANNEL_OUT_FRONT_LEFT_OF_CENTER
+              | AudioFormat.CHANNEL_OUT_FRONT_RIGHT_OF_CENTER
+              | AudioFormat.CHANNEL_OUT_BACK_CENTER
+              | AudioFormat.CHANNEL_OUT_TOP_CENTER
+              | AudioFormat.CHANNEL_OUT_TOP_FRONT_CENTER
+              | AudioFormat.CHANNEL_OUT_TOP_BACK_CENTER
+              | AudioFormat.CHANNEL_OUT_TOP_SIDE_LEFT
+              | AudioFormat.CHANNEL_OUT_TOP_SIDE_RIGHT
+              | AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_LEFT
+              | AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_RIGHT
+              | AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_CENTER
+              | AudioFormat.CHANNEL_OUT_LOW_FREQUENCY_2;
+        } else {
+          return AudioFormat.CHANNEL_INVALID;
+        }
       default:
         return AudioFormat.CHANNEL_INVALID;
     }
@@ -2301,6 +2420,7 @@ public final class Util {
         return 28;
       case C.ENCODING_OPUS:
         return 30;
+      case C.ENCODING_PCM_24BIT:
       case C.ENCODING_PCM_32BIT:
         return 31;
       case C.ENCODING_DTS_UHD_P2:
@@ -2319,19 +2439,30 @@ public final class Util {
    */
   @UnstableApi
   public static int getPcmFrameSize(@C.PcmEncoding int pcmEncoding, int channelCount) {
+    return getByteDepth(pcmEncoding) * channelCount;
+  }
+
+  /**
+   * Returns the byte depth for audio with the specified encoding.
+   *
+   * @param pcmEncoding The encoding of the audio data.
+   * @return The byte depth of the audio.
+   */
+  @UnstableApi
+  public static int getByteDepth(@C.PcmEncoding int pcmEncoding) {
     switch (pcmEncoding) {
       case C.ENCODING_PCM_8BIT:
-        return channelCount;
+        return 1;
       case C.ENCODING_PCM_16BIT:
       case C.ENCODING_PCM_16BIT_BIG_ENDIAN:
-        return channelCount * 2;
+        return 2;
       case C.ENCODING_PCM_24BIT:
       case C.ENCODING_PCM_24BIT_BIG_ENDIAN:
-        return channelCount * 3;
+        return 3;
       case C.ENCODING_PCM_32BIT:
       case C.ENCODING_PCM_32BIT_BIG_ENDIAN:
       case C.ENCODING_PCM_FLOAT:
-        return channelCount * 4;
+        return 4;
       case C.ENCODING_INVALID:
       case Format.NO_VALUE:
       default:
@@ -2355,6 +2486,8 @@ public final class Util {
         return C.USAGE_ASSISTANCE_SONIFICATION;
       case C.STREAM_TYPE_VOICE_CALL:
         return C.USAGE_VOICE_COMMUNICATION;
+      case C.STREAM_TYPE_ACCESSIBILITY:
+        return C.USAGE_ASSISTANCE_ACCESSIBILITY;
       case C.STREAM_TYPE_MUSIC:
       default:
         return C.USAGE_MEDIA;
@@ -2377,6 +2510,7 @@ public final class Util {
       case C.STREAM_TYPE_SYSTEM:
         return C.AUDIO_CONTENT_TYPE_SONIFICATION;
       case C.STREAM_TYPE_VOICE_CALL:
+      case C.STREAM_TYPE_ACCESSIBILITY:
         return C.AUDIO_CONTENT_TYPE_SPEECH;
       case C.STREAM_TYPE_MUSIC:
       default:
@@ -2511,7 +2645,8 @@ public final class Util {
    */
   public static @ContentType int inferContentType(Uri uri) {
     @Nullable String scheme = uri.getScheme();
-    if (scheme != null && Ascii.equalsIgnoreCase("rtsp", scheme)) {
+    if (scheme != null
+        && (Ascii.equalsIgnoreCase("rtsp", scheme) || Ascii.equalsIgnoreCase("rtspt", scheme))) {
       return C.CONTENT_TYPE_RTSP;
     }
 
@@ -2573,7 +2708,7 @@ public final class Util {
         return C.CONTENT_TYPE_HLS;
       case "ism":
       case "isml":
-        return C.TYPE_SS;
+        return C.CONTENT_TYPE_SS;
       default:
         return C.CONTENT_TYPE_OTHER;
     }
@@ -2855,6 +2990,50 @@ public final class Util {
   }
 
   /**
+   * Returns the result of updating a CRC-16 with the specified bytes in a "most significant bit
+   * first" order.
+   *
+   * @param bytes Array containing the bytes to update the crc value with.
+   * @param start The start index (inclusive) of the byte range to update the crc with.
+   * @param end The end index (exclusive) of the byte range to update the crc with.
+   * @param initialValue The initial value for the crc calculation. The lower 16 bits of this 32-bit
+   *     integer are used for the CRC computation.
+   * @return The result of updating the initial value with the specified bytes.
+   */
+  @UnstableApi
+  public static int crc16(byte[] bytes, int start, int end, int initialValue) {
+    for (int i = start; i < end; i++) {
+      int value = UnsignedBytes.toInt(bytes[i]);
+      // Process one message byte to update the current CRC-16 value.
+      initialValue = crc16UpdateFourBits(value >> 4, initialValue); // High nibble first.
+      initialValue = crc16UpdateFourBits(value & 0x0F, initialValue); // Low nibble.
+    }
+    return initialValue;
+  }
+
+  /**
+   * Process 4 bits of the message to update the CRC Value. Note that the data will be in the low
+   * nibble of value.
+   *
+   * @param value The 4-bit message data to be processed.
+   * @param crc16Register The current CRC-16 register to be updated. Only the lower 16 bits of this
+   *     32-bit integer are used for the CRC computation.
+   * @return The result of updating the CRC-16 register with the specified 4-bit message data.
+   */
+  private static int crc16UpdateFourBits(int value, int crc16Register) {
+    // Step one, extract the most significant 4 bits of the CRC register.
+    int mostSignificant4Bits = (crc16Register >> 12) & 0xFF;
+    // XOR in the Message Data into the extracted bits.
+    mostSignificant4Bits = (mostSignificant4Bits ^ value) & 0xFF;
+    // Shift the CRC register left 4 bits.
+    crc16Register = (crc16Register << 4) & 0xFFFF; // Handle as 16 bit, discard any sign extension.
+    // Do the table look-ups and XOR the result into the CRC tables.
+    crc16Register = (crc16Register ^ CRC16_BYTES_MSBF[mostSignificant4Bits]) & 0xFFFF;
+
+    return crc16Register;
+  }
+
+  /**
    * Returns the result of updating a CRC-8 with the specified bytes in a "most significant bit
    * first" order.
    *
@@ -2952,7 +3131,9 @@ public final class Util {
   /** Returns the default {@link Locale.Category#DISPLAY DISPLAY} {@link Locale}. */
   @UnstableApi
   public static Locale getDefaultDisplayLocale() {
-    return SDK_INT >= 24 ? Locale.getDefault(Locale.Category.DISPLAY) : Locale.getDefault();
+    return Build.VERSION.SDK_INT >= 24
+        ? Locale.getDefault(Locale.Category.DISPLAY)
+        : Locale.getDefault();
   }
 
   /**
@@ -3047,7 +3228,7 @@ public final class Util {
    */
   @UnstableApi
   public static boolean isAutomotive(Context context) {
-    return SDK_INT >= 23
+    return Build.VERSION.SDK_INT >= 23
         && context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
   }
 
@@ -3059,7 +3240,7 @@ public final class Util {
    */
   @UnstableApi
   public static boolean isWear(Context context) {
-    return SDK_INT >= 20
+    return Build.VERSION.SDK_INT >= 20
         && context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH);
   }
 
@@ -3083,7 +3264,7 @@ public final class Util {
 
   public static Display getDefaultDisplay(Context context) {
     @Nullable Display defaultDisplay = null;
-    if (SDK_INT >= 17) {
+    if (Build.VERSION.SDK_INT >= 17) {
       @Nullable
       DisplayManager displayManager =
           (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
@@ -3132,7 +3313,7 @@ public final class Util {
       // vendor.display-size instead.
       @Nullable
       String displaySize =
-          SDK_INT < 28
+          Build.VERSION.SDK_INT < 28
               ? getSystemProperty("sys.display-size")
               : getSystemProperty("vendor.display-size");
       // If we managed to read the display size, attempt to parse it.
@@ -3153,17 +3334,17 @@ public final class Util {
       }
 
       // Sony Android TVs advertise support for 4k output via a system feature.
-      if ("Sony".equals(MANUFACTURER)
-          && MODEL.startsWith("BRAVIA")
+      if ("Sony".equals(Build.MANUFACTURER)
+          && Build.MODEL.startsWith("BRAVIA")
           && context.getPackageManager().hasSystemFeature("com.sony.dtv.hardware.panel.qfhd")) {
         return new Point(3840, 2160);
       }
     }
 
     Point displaySize = new Point();
-    if (SDK_INT >= 23) {
+    if (Build.VERSION.SDK_INT >= 23) {
       getDisplaySizeV23(display, displaySize);
-    } else if (SDK_INT >= 17) {
+    } else if (Build.VERSION.SDK_INT >= 17) {
       getDisplaySizeV17(display, displaySize);
     } else {
       getDisplaySizeV16(display, displaySize);
@@ -3357,13 +3538,14 @@ public final class Util {
     // bounds. From API 29, if the app targets API 29 or later, the {@link
     // MediaFormat#KEY_ALLOW_FRAME_DROP} key prevents frame dropping even when the surface is
     // full.
-    // Some API 30 devices might drop frames despite setting {@link
-    // MediaFormat#KEY_ALLOW_FRAME_DROP} to 0. See b/307518793 and b/289983935.
-    return SDK_INT < 29
+    // Some devices might drop frames despite setting {@link
+    // MediaFormat#KEY_ALLOW_FRAME_DROP} to 0. See b/307518793, b/289983935 and b/353487886.
+    return Build.VERSION.SDK_INT < 29
         || context.getApplicationInfo().targetSdkVersion < 29
-        || (SDK_INT == 30
-            && (Ascii.equalsIgnoreCase(MODEL, "moto g(20)")
-                || Ascii.equalsIgnoreCase(MODEL, "rmx3231")));
+        || ((Build.VERSION.SDK_INT == 30
+        && (Ascii.equalsIgnoreCase(Build.MODEL, "moto g(20)")
+        || Ascii.equalsIgnoreCase(Build.MODEL, "rmx3231")))
+        || (Build.VERSION.SDK_INT == 34 && Ascii.equalsIgnoreCase(Build.MODEL, "sm-x200")));
   }
 
   /**
@@ -3844,6 +4026,16 @@ public final class Util {
     0X9E7D9662, 0X933EB0BB, 0X97FFAD0C, 0XAFB010B1, 0XAB710D06, 0XA6322BDF, 0XA2F33668,
     0XBCB4666D, 0XB8757BDA, 0XB5365D03, 0XB1F740B4
   };
+
+  /**
+   * Allows the CRC-16 calculation to be done byte by byte instead of bit per bit in the order "most
+   * significant bit first".
+   */
+  private static final int[] CRC16_BYTES_MSBF =
+      new int[] {
+          0x0000, 0x01021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
+          0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF
+      };
 
   /**
    * Allows the CRC-8 calculation to be done byte by byte instead of bit per bit in the order "most
