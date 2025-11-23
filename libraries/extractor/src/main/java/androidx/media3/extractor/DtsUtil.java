@@ -155,6 +155,14 @@ public final class DtsUtil {
   private static final int SYNC_VALUE_LE = 0xFE7F0180;
   private static final int SYNC_VALUE_14B_LE = 0xFF1F00E8;
 
+  public static final Format DTS_WAV_FORMAT =
+      new Format.Builder()
+          .setSampleMimeType(MimeTypes.AUDIO_DTS)
+          .setAverageBitrate(44100 * 2 * 2)
+          .setChannelCount(6)
+          .setSampleRate(44100)
+          .build();
+
   /**
    * DTS Extension Substream Syncword (in different Endianness). See ETSI TS 102 114 (V1.6.1)
    * Section 7.4.1.
@@ -389,6 +397,13 @@ public final class DtsUtil {
         fsize = (((data[5] & 0x03) << 12) | ((data[6] & 0xFF) << 4) | ((data[7] & 0xF0) >> 4)) + 1;
     }
 
+    // fix fsize if it is odd, make it even (e.g. 3584 + 1 is wrong, should be 3583 + 1)
+    if (BuildConfig.DEBUG) {
+      if (fsize % 2 != 0) {
+        android.util.Log.i("DtsUtil", "DTS frame size is " + fsize + ", fixing it by minus 1.");
+      }
+    }
+    fsize = fsize >> 1 << 1;
     // If the frame is stored in 14-bit mode, adjust the frame size to reflect the actual byte size.
     return uses14BitPerWord ? fsize * 16 / 14 : fsize;
   }
@@ -748,6 +763,26 @@ public final class DtsUtil {
     }
     frameBits.reset(frame);
     return frameBits;
+  }
+
+  // frame array will be modified to be big endian.
+  public static byte[] transform14LETo16BE(byte[] frame, int offset, int length) {
+    // Little endian to big endian
+    for (int i = offset; i < offset + length - 1; i += 2) {
+      byte temp = frame[i];
+      frame[i] = frame[i + 1];
+      frame[i + 1] = temp;
+    }
+    byte[] newBytesOf16 = new byte[length * 14 / 16];
+    ParsableBitArray bitsOf16 = new ParsableBitArray(newBytesOf16);
+    // Discard the 2 most significant bits of each 16 bit word.
+    ParsableBitArray bitsOf14 = new ParsableBitArray(frame, offset + length);
+    bitsOf14.setPosition(offset * 8);
+    while (bitsOf14.bitsLeft() >= 16) {
+      bitsOf14.skipBits(2);
+      bitsOf16.putInt(bitsOf14.readBits(14), 14);
+    }
+    return newBytesOf16;
   }
 
   private static boolean isLittleEndianFrameHeader(byte[] frameHeader) {

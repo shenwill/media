@@ -254,6 +254,11 @@ public final class DtsReader implements ElementaryStreamReader {
     }
   }
 
+  public void setTrackOutput(TrackOutput trackOutput, String formatId) {
+    this.formatId = formatId;
+    this.output = trackOutput;
+  }
+
   /**
    * Continues a read from the provided {@code source} into a given {@code target}. It's assumed
    * that the data should be written into {@code target} starting from an offset of zero.

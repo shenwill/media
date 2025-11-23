@@ -155,6 +155,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
   private @TsExtractor.Mode int tsMode;
   private @DefaultTsPayloadReaderFactory.Flags int tsFlags;
   // TODO (b/261183220): Initialize tsSubtitleFormats in constructor once shrinking bug is fixed.
+  private @WavExtractor.Flags int wavFlags;
   @Nullable private ImmutableList<Format> tsSubtitleFormats;
   private int tsTimestampSearchBytes;
   private boolean textTrackTranscodingEnabled;
@@ -332,6 +333,12 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
   public synchronized DefaultExtractorsFactory setTsExtractorFlags(
       @DefaultTsPayloadReaderFactory.Flags int flags) {
     tsFlags = flags;
+    return this;
+  }
+
+  public synchronized DefaultExtractorsFactory setWavExtractorFlags(
+      @WavExtractor.Flags int flags) {
+    wavFlags = flags;
     return this;
   }
 
@@ -537,7 +544,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
                 TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES));
         break;
       case FileTypes.WAV:
-        extractors.add(new WavExtractor());
+        extractors.add(new WavExtractor(wavFlags));
         break;
       case FileTypes.JPEG:
         extractors.add(new JpegExtractor(jpegFlags));

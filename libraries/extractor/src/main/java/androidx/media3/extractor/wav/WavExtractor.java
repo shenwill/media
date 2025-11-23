@@ -30,6 +30,7 @@ import androidx.media3.common.util.Log;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
+import androidx.media3.extractor.DtsUtil;
 import androidx.media3.extractor.Extractor;
 import androidx.media3.extractor.ExtractorInput;
 import androidx.media3.extractor.ExtractorOutput;
@@ -37,6 +38,11 @@ import androidx.media3.extractor.ExtractorsFactory;
 import androidx.media3.extractor.PositionHolder;
 import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.WavUtil;
+import androidx.media3.extractor.ts.DtsReader;
+import androidx.media3.extractor.ts.TsExtractor;
+
+import com.google.common.primitives.Ints;
+
 import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
@@ -50,6 +56,16 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 @UnstableApi
 public final class WavExtractor implements Extractor {
 
+  @Target(TYPE_USE)
+  @IntDef(
+      flag = true,
+      value = {
+          FLAG_DISABLE_DTS,
+      })
+  public @interface Flags {}
+
+  public static final int FLAG_DISABLE_DTS = 1;
+  private static final int SYNC_VALUE_14B_LE = 0xFF1F00E8;
   private static final String TAG = "WavExtractor";
 
   /**
@@ -88,12 +104,18 @@ public final class WavExtractor implements Extractor {
   private @MonotonicNonNull OutputWriter outputWriter;
   private int dataStartPosition;
   private long dataEndPosition;
+  private @WavExtractor.Flags int flags;
 
   public WavExtractor() {
     state = STATE_READING_FILE_TYPE;
     rf64SampleDataSize = C.LENGTH_UNSET;
     dataStartPosition = C.INDEX_UNSET;
     dataEndPosition = C.INDEX_UNSET;
+  }
+
+  public WavExtractor(@WavExtractor.Flags int flags) {
+    this();
+    this.flags = flags;
   }
 
   @Override
@@ -184,7 +206,8 @@ public final class WavExtractor implements Extractor {
               trackOutput,
               wavFormat,
               MimeTypes.AUDIO_ALAW,
-              /* pcmEncoding= */ Format.NO_VALUE);
+              /* pcmEncoding= */ Format.NO_VALUE,
+              flags);
     } else if (wavFormat.formatType == WavUtil.TYPE_MLAW) {
       outputWriter =
           new PassthroughOutputWriter(
@@ -192,7 +215,8 @@ public final class WavExtractor implements Extractor {
               trackOutput,
               wavFormat,
               MimeTypes.AUDIO_MLAW,
-              /* pcmEncoding= */ Format.NO_VALUE);
+              /* pcmEncoding= */ Format.NO_VALUE,
+              flags);
     } else {
       @C.PcmEncoding
       int pcmEncoding =
@@ -203,7 +227,12 @@ public final class WavExtractor implements Extractor {
       }
       outputWriter =
           new PassthroughOutputWriter(
-              extractorOutput, trackOutput, wavFormat, MimeTypes.AUDIO_RAW, pcmEncoding);
+              extractorOutput,
+              trackOutput,
+              wavFormat,
+              MimeTypes.AUDIO_RAW,
+              pcmEncoding,
+              flags);
     }
     state = STATE_SKIPPING_TO_SAMPLE_DATA;
   }
@@ -276,11 +305,25 @@ public final class WavExtractor implements Extractor {
     private final TrackOutput trackOutput;
     private final WavFormat wavFormat;
     private final Format format;
+    private int wavDataStartPosition;
+    private long wavDataEndPosition;
 
-    /** The target size of each output sample, in bytes. */
+    // for dts
+    private final int DTS_PACKET_SIZE = 4096;
+    private final int MAX_BYTES_TO_SNIFF = 1024 * DTS_PACKET_SIZE;
+    private boolean beenDetected;
+    private final boolean dtsEnabled;
+    private ParsableByteArray dtsPacket;
+    private DtsReader dtsReader = null;
+
+    /**
+     * The target size of each output sample, in bytes.
+     */
     private final int targetSampleSizeBytes;
 
-    /** The time at which the writer was last {@link #reset}. */
+    /**
+     * The time at which the writer was last {@link #reset}.
+     */
     private long startTimeUs;
 
     /**
@@ -301,11 +344,13 @@ public final class WavExtractor implements Extractor {
         TrackOutput trackOutput,
         WavFormat wavFormat,
         String mimeType,
-        @C.PcmEncoding int pcmEncoding)
+        @C.PcmEncoding int pcmEncoding,
+        @WavExtractor.Flags int flags)
         throws ParserException {
       this.extractorOutput = extractorOutput;
       this.trackOutput = trackOutput;
       this.wavFormat = wavFormat;
+      this.dtsEnabled = (flags & FLAG_DISABLE_DTS) == 0;
 
       int bytesPerFrame = wavFormat.numChannels * wavFormat.bitsPerSample / 8;
       // Validate the WAV format. Blocks are expected to correspond to single frames.
@@ -328,6 +373,7 @@ public final class WavExtractor implements Extractor {
               .setSampleRate(wavFormat.frameRateHz)
               .setPcmEncoding(pcmEncoding)
               .build();
+      beenDetected = false;
     }
 
     @Override
@@ -335,10 +381,19 @@ public final class WavExtractor implements Extractor {
       startTimeUs = timeUs;
       pendingOutputBytes = 0;
       outputFrameCount = 0;
+      if (dtsReader != null) {
+        dtsReader.seek();
+        dtsReader.packetStarted(timeUs, 0);
+      }
     }
 
     @Override
     public void init(int dataStartPosition, long dataEndPosition) {
+      if (dtsEnabled) {
+        wavDataStartPosition = dataStartPosition;
+        wavDataEndPosition = dataEndPosition;
+        return;
+      }
       extractorOutput.seekMap(
           new WavSeekMap(wavFormat, /* framesPerBlock= */ 1, dataStartPosition, dataEndPosition));
       trackOutput.format(format);
@@ -346,6 +401,80 @@ public final class WavExtractor implements Extractor {
 
     @Override
     public boolean sampleData(ExtractorInput input, long bytesLeft) throws IOException {
+      if (dtsEnabled) {
+        if (!beenDetected && bytesLeft > 4) {
+          beenDetected = true;
+          int bytesLeftToSniff = (int) Math.min(MAX_BYTES_TO_SNIFF, bytesLeft);
+          int peekBufferPosition = searchSync(input, bytesLeftToSniff);
+          if (peekBufferPosition >= 0) {
+            dtsReader = new DtsReader(
+                TsExtractor.TS_STREAM_TYPE_DTS,
+                null,
+                0,
+                DTS_PACKET_SIZE,
+                null);
+            input.skipFully(peekBufferPosition);
+            input.resetPeekPosition();
+            extractorOutput.seekMap(
+                new WavSeekMap(
+                    wavFormat, /* framesPerBlock= */ 1, input.getPosition(), input.getLength()));
+            bytesLeft -= peekBufferPosition;
+            dtsReader.setTrackOutput(trackOutput, "0");
+            dtsReader.packetStarted(startTimeUs, 0);
+            dtsPacket = new ParsableByteArray(new byte[DTS_PACKET_SIZE], 0);
+          }
+          if (dtsReader == null) {
+            extractorOutput.seekMap(
+                new WavSeekMap(
+                    wavFormat, /* framesPerBlock= */ 1, wavDataStartPosition, wavDataEndPosition));
+            trackOutput.format(format);
+          }
+        }
+        if (dtsReader != null) {
+          if (dtsPacket.bytesLeft() == 0) {
+            int bytesLeftToSniff = (int) Math.min(DTS_PACKET_SIZE * 2, bytesLeft);
+            input.resetPeekPosition();
+            int peekBufferPosition = searchSync(input, bytesLeftToSniff);
+            if (peekBufferPosition >= 0) {
+              input.skipFully(peekBufferPosition);
+              input.resetPeekPosition();
+              bytesLeft -= peekBufferPosition;
+              int bytesToRead = (int) Math.min(bytesLeft, dtsPacket.capacity());
+              input.readFully(dtsPacket.getData(), 0, bytesToRead);
+              bytesLeft -= bytesToRead;
+              dtsPacket.setPosition(0);
+              dtsPacket.setLimit(bytesToRead);
+            } else {
+              // searchSync() failed, maybe seeking out of DTS data range, just skip forward
+              int bytesToSkip = (int) Math.min(DTS_PACKET_SIZE, bytesLeft);
+              input.skipFully(bytesToSkip);
+              bytesLeft -= bytesToSkip;
+            }
+          }
+          // experimental test: convert 14-bit LE to 16-bit BE
+          // DTS-WAV passthrough works on Zidoo Z3000 PRO for both 16BE & 14LE.
+          // For Shield TV Pro, passthrough fails, but decoder extensions work for both 16BE & 14LE.
+          boolean try16BE = false;
+          if (try16BE) {
+            byte[] bytesOf16BE = DtsUtil.transform14LETo16BE(
+                dtsPacket.getData(), dtsPacket.getPosition(), dtsPacket.bytesLeft());
+            ParsableByteArray dtsPacket16BE = new ParsableByteArray(bytesOf16BE);
+            while (dtsPacket16BE.bytesLeft() > 0) {
+              dtsReader.consume(dtsPacket16BE);
+            }
+          } else {
+            while (dtsPacket.bytesLeft() > 0) {
+              dtsReader.consume(dtsPacket);
+            }
+          }
+          dtsPacket.skipBytes(dtsPacket.bytesLeft());
+          if (bytesLeft <= 0) {
+            dtsReader.packetFinished(true);
+          }
+          return bytesLeft <= 0;
+        }
+      }
+
       // Write sample data until we've reached the target sample size, or the end of the data.
       while (bytesLeft > 0 && pendingOutputBytes < targetSampleSizeBytes) {
         int bytesToRead = (int) min(targetSampleSizeBytes - pendingOutputBytes, bytesLeft);
@@ -377,6 +506,51 @@ public final class WavExtractor implements Extractor {
       }
 
       return bytesLeft <= 0;
+    }
+
+    private boolean checkSyncValue(byte[] scratchBytes, ExtractorInput input, long bytesLeft)
+        throws IOException {
+
+      boolean matched = false;
+      if (Ints.fromByteArray(scratchBytes) == SYNC_VALUE_14B_LE) {
+        // check next sync word at offset 4096
+        matched = true;
+        boolean doubleCheckSync = false;
+        if (doubleCheckSync) {
+          if (bytesLeft > DTS_PACKET_SIZE) {
+            int peekBufferPosition = (int) (input.getPeekPosition() - input.getPosition());
+            input.advancePeekPosition(DTS_PACKET_SIZE - 4);
+            input.peekFully(scratchBytes, 0, 4);
+            matched = Ints.fromByteArray(scratchBytes) == SYNC_VALUE_14B_LE;
+            input.resetPeekPosition();
+            input.advancePeekPosition(peekBufferPosition);
+            if (!matched) {
+              Log.i(TAG, "double check sync failed at " + (input.getPeekPosition() + 4096 - 4));
+            }
+          }
+        }
+      }
+      return matched;
+    }
+
+    // return peekBufferPosition at matched sync value if found, otherwise -1,
+    // leave peek position after peeked
+    private int searchSync(ExtractorInput input, int bytesLeftToSniff) throws IOException {
+      byte[] scratchBytes = new byte[4];
+      input.peekFully(scratchBytes, 0, 2);
+      int bytesSniffed = 2;
+      bytesLeftToSniff -= 2;
+      while (bytesLeftToSniff >= 2) {
+        input.peekFully(scratchBytes, 2, 2);
+        bytesSniffed += 2;
+        bytesLeftToSniff -= 2;
+        if (checkSyncValue(scratchBytes, input, bytesLeftToSniff)) {
+          return bytesSniffed - 4;
+        }
+        scratchBytes[0] = scratchBytes[2];
+        scratchBytes[1] = scratchBytes[3];
+      }
+      return -1;
     }
   }
 
