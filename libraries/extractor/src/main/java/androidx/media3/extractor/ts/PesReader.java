@@ -144,6 +144,11 @@ public final class PesReader implements TsPayloadReader {
             readLength -= padding;
             data.setLimit(data.getPosition() + readLength);
           }
+          if ((flags & FLAG_RANDOM_ACCESS_INDICATOR) != 0) {
+            if (reader instanceof H264Reader) {
+              ((H264Reader) reader).enableRandomAccessIndicator();
+            }
+          }
           reader.consume(data);
           if (payloadSize != C.LENGTH_UNSET) {
             payloadSize -= readLength;

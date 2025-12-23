@@ -611,7 +611,8 @@ public final class TsExtractor implements Extractor {
     int searchStart = tsPacketBuffer.getPosition() + packetPrefixSize;
     int limit = tsPacketBuffer.limit();
     int syncBytePosition =
-        TsUtil.findSyncBytePosition(tsPacketBuffer.getData(), searchStart, limit);
+        TsUtil.tryToFindRealSyncBytePosition(
+            tsPacketBuffer.getData(), searchStart, limit, packetSize);
     // Discard all bytes before the sync byte.
     // If sync byte is not found, this means discard the whole buffer.
     tsPacketBuffer.setPosition(syncBytePosition);

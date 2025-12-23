@@ -59,13 +59,45 @@ public final class TsUtil {
   /**
    * Returns the position of the first TS_SYNC_BYTE within the range [startPosition, limitPosition)
    * from the provided data array, or returns limitPosition if sync byte could not be found.
+   * Use this function carefully because the first TS_SYNC_BYTE maybe not the real TS_SYNC_BYTE
+   * Following usages are safe:
+   * 1. Use this function stepping forward again and again at least 5 times,
+   * 2. or use this function after real TS_SYNC_BYTE is found.
    */
-  public static int findSyncBytePosition(byte[] data, int startPosition, int limitPosition) {
+  public static int findFirstSyncBytePosition(byte[] data, int startPosition, int limitPosition) {
     int position = startPosition;
     while (position < limitPosition && data[position] != TsExtractor.TS_SYNC_BYTE) {
       position++;
     }
     return position;
+  }
+
+  public static int tryToFindRealSyncBytePosition(
+      byte[] data, int startPosition, int limitPosition, int packetSize) {
+    int position = startPosition;
+    while (position < limitPosition) {
+      if (data[position] != TsExtractor.TS_SYNC_BYTE) {
+        position++;
+      } else {
+        int roundCheck = 1;
+        int nextSyncPosition = packetSize + position;
+        while (roundCheck < 5 && nextSyncPosition < limitPosition
+            && data[nextSyncPosition] == TsExtractor.TS_SYNC_BYTE) {
+          roundCheck++;
+          nextSyncPosition += packetSize;
+        }
+        if (roundCheck == 5 || nextSyncPosition >= limitPosition) {
+          break;
+        } else {
+          position++;
+        }
+      }
+    }
+    return position;
+  }
+
+  public static int getStartPosition(int syncBytePosition, int packetSize) {
+    return syncBytePosition - (packetSize - TsExtractor.TS_PACKET_SIZE);
   }
 
   /**

@@ -118,6 +118,10 @@ public final class H264Reader implements ElementaryStreamReader {
     randomAccessIndicator |= (flags & FLAG_RANDOM_ACCESS_INDICATOR) != 0;
   }
 
+  public void enableRandomAccessIndicator() {
+    randomAccessIndicator = true;
+  }
+
   @Override
   public void consume(ParsableByteArray data) {
     assertTracksCreated();

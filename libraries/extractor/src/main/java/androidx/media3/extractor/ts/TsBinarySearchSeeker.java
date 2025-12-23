@@ -104,12 +104,16 @@ import java.io.IOException;
       long lastPcrTimeUsInRange = C.TIME_UNSET;
 
       while (packetBuffer.bytesLeft() >= packetSize) {
+        // startOfPacket actually is startOfSync
         int startOfPacket =
-            TsUtil.findSyncBytePosition(packetBuffer.getData(), packetBuffer.getPosition(), limit);
+            TsUtil.findFirstSyncBytePosition(
+                packetBuffer.getData(), packetBuffer.getPosition(), limit);
+        // endOfPacket actually is nextStartOfPacket
         int endOfPacket = startOfPacket + packetSize;
         if (endOfPacket > limit) {
           break;
         }
+        // startOfPacket actually is startOfSync
         long pcrValue = TsUtil.readPcrFromPacket(packetBuffer, startOfPacket, pcrPid);
         if (pcrValue != C.TIME_UNSET) {
           long pcrTimeUs = pcrTimestampAdjuster.adjustTsTimestamp(pcrValue);
@@ -130,11 +134,15 @@ import java.io.IOException;
           lastPcrTimeUsInRange = pcrTimeUs;
           startOfLastPacketPosition = startOfPacket;
         }
+        // endOfPacket actually is nextStartOfPacket
+        // endOfLastPacketPosition actually is nextStartOfLastPacketPosition
         packetBuffer.setPosition(endOfPacket);
         endOfLastPacketPosition = endOfPacket;
       }
 
       if (lastPcrTimeUsInRange != C.TIME_UNSET) {
+        // endOfLastPacketPositionInStream actually is nextStartOfLastPacketPositionInStream
+        // endOfLastPacketPosition actually is nextStartOfLastPacketPosition
         long endOfLastPacketPositionInStream = bufferStartOffset + endOfLastPacketPosition;
         return TimestampSearchResult.underestimatedResult(
             lastPcrTimeUsInRange, endOfLastPacketPositionInStream);
