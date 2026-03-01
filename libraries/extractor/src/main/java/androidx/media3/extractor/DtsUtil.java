@@ -399,13 +399,12 @@ public final class DtsUtil {
 
     // fix fsize if it is odd, make it even (e.g. 3584 + 1 is wrong, should be 3583 + 1)
     if (BuildConfig.DEBUG) {
-      if (fsize % 2 != 0) {
-        android.util.Log.i("DtsUtil", "DTS frame size is " + fsize + ", fixing it by minus 1.");
+      if (uses14BitPerWord && fsize % 2 != 0) {
+        //android.util.Log.i("DtsUtil", "DTS frame size is " + fsize + ", fixing it by minus 1.");
       }
     }
-    fsize = fsize >> 1 << 1;
     // If the frame is stored in 14-bit mode, adjust the frame size to reflect the actual byte size.
-    return uses14BitPerWord ? fsize * 16 / 14 : fsize;
+    return uses14BitPerWord ? (fsize >> 1 << 1) * 16 / 14 : fsize;
   }
 
   /**

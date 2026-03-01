@@ -114,7 +114,7 @@ public class DefaultTrackNameProvider implements TrackNameProvider {
     Locale displayLocale = Util.getDefaultDisplayLocale();
     String languageName = languageLocale.getDisplayName(displayLocale);
     if (TextUtils.isEmpty(languageName)) {
-      return "";
+      return language;
     }
     try {
       // Capitalize the first letter. See: https://github.com/google/ExoPlayer/issues/9452.

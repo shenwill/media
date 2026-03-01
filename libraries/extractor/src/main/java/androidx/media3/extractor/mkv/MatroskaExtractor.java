@@ -347,6 +347,7 @@ public class MatroskaExtractor implements Extractor {
   private static final int FOURCC_COMPRESSION_DIVX = 0x58564944;
   private static final int FOURCC_COMPRESSION_H263 = 0x33363248;
   private static final int FOURCC_COMPRESSION_VC1 = 0x31435657;
+  private static final int FOURCC_COMPRESSION_XVID = 0x44495658;
 
   /**
    * A template for the prefix that must be added to each subrip sample.
@@ -2899,6 +2900,8 @@ public class MatroskaExtractor implements Extractor {
         long compression = buffer.readLittleEndianUnsignedInt();
         if (compression == FOURCC_COMPRESSION_DIVX) {
           return new Pair<>(MimeTypes.VIDEO_DIVX, null);
+        } else if (compression == FOURCC_COMPRESSION_XVID) {
+          return new Pair<>(MimeTypes.VIDEO_MP4V, null);
         } else if (compression == FOURCC_COMPRESSION_H263) {
           return new Pair<>(MimeTypes.VIDEO_H263, null);
         } else if (compression == FOURCC_COMPRESSION_VC1) {

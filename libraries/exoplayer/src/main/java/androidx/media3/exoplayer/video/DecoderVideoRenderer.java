@@ -154,6 +154,7 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
   private int buffersInCodecCount;
   private long lastRenderTimeUs;
   private long outputStreamOffsetUs;
+  private long videoDelayUs = 0;
 
   /** Decoder event counters used for debugging purposes. */
   protected DecoderCounters decoderCounters;
@@ -189,6 +190,7 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
 
   @Override
   public void render(long positionUs, long elapsedRealtimeUs) throws ExoPlaybackException {
+    positionUs = positionUs + videoDelayUs;
     if (outputStreamEnded) {
       return;
     }
@@ -266,6 +268,8 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
       setOutput(message);
     } else if (messageType == MSG_SET_VIDEO_FRAME_METADATA_LISTENER) {
       frameMetadataListener = (VideoFrameMetadataListener) message;
+    } else if (messageType == MSG_SET_VIDEO_DELAY_US) {
+      videoDelayUs = (long) message;
     } else {
       super.handleMessage(messageType, message);
     }
@@ -600,7 +604,11 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
     if (!renderYuv && !renderSurface) {
       dropOutputBuffer(outputBuffer);
     } else {
-      maybeNotifyVideoSizeChanged(outputBuffer.width, outputBuffer.height);
+      maybeNotifyVideoSizeChanged(
+          outputBuffer.width,
+          outputBuffer.height,
+          outputFormat.pixelWidthHeightRatio,
+          outputFormat.rotationDegrees);
       if (renderYuv) {
         checkNotNull(outputBufferRenderer).setOutputBuffer(outputBuffer);
       } else {
@@ -854,6 +862,7 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
    */
   private boolean processOutputBuffer(long positionUs, long elapsedRealtimeUs)
       throws ExoPlaybackException, DecoderException {
+    positionUs = positionUs + videoDelayUs;
     if (initialPositionUs == C.TIME_UNSET) {
       initialPositionUs = positionUs;
     }
@@ -977,11 +986,12 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
     }
   }
 
-  private void maybeNotifyVideoSizeChanged(int width, int height) {
+  private void maybeNotifyVideoSizeChanged(
+      int width, int height, float pixelWidthHeightRatio, int rotationDegrees) {
     if (reportedVideoSize == null
         || reportedVideoSize.width != width
         || reportedVideoSize.height != height) {
-      reportedVideoSize = new VideoSize(width, height);
+      reportedVideoSize = new VideoSize(width, height, rotationDegrees, pixelWidthHeightRatio);
       eventDispatcher.videoSizeChanged(reportedVideoSize);
     }
   }
