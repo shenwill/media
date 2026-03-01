@@ -128,7 +128,7 @@ public final class VobsubParser implements SubtitleParser {
         new CuesWithTiming(
             cue != null ? ImmutableList.of(cue) : ImmutableList.of(),
             /* startTimeUs= */ C.TIME_UNSET,
-            /* durationUs= */ DEFAULT_DURATION_US));
+            cue == null || cue.endTimeMs <= 0 ? DEFAULT_DURATION_US : cue.endTimeMs * 1000L));
   }
 
   private void parseSubFile(Consumer<CuesWithTiming> output) {
@@ -368,6 +368,7 @@ public final class VobsubParser implements SubtitleParser {
     private Rect boundingBox;
     private int dataOffset0;
     private int dataOffset1;
+    private int endTimeMs;
 
     public CueBuilder() {
       colors = new int[4];
@@ -421,15 +422,30 @@ public final class VobsubParser implements SubtitleParser {
     public void parseSpu(ParsableByteArray buffer) {
       if (palette == null || !hasPlane) {
         // Give up if we don't have the color palette or the video size.
+        Log.i(TAG, "---===Give up if we don't have the color palette or the video size");
         return;
       }
       int[] palette = this.palette;
-      buffer.skipBytes(buffer.readUnsignedShort() - 2);
-      int end = buffer.readUnsignedShort();
-      parseControl(palette, buffer, end);
+      buffer.skipBytes(buffer.readUnsignedShort() - 4);
+      int lastEnd = 0;
+      boolean lastEndHit = false;
+      while (!lastEndHit && buffer.bytesLeft() > 4) {
+        int delayExecute = buffer.readUnsignedShort();
+        int end = buffer.readUnsignedShort();
+        if (end < lastEnd) {
+          break;
+        }
+        lastEndHit = end == lastEnd;
+        if (lastEndHit) {
+          end = buffer.limit();
+        } else {
+          lastEnd = end;
+        }
+        parseControl(palette, buffer, end, delayExecute);
+      }
     }
 
-    private void parseControl(int[] palette, ParsableByteArray buffer, int end) {
+    private void parseControl(int[] palette, ParsableByteArray buffer, int end, int delayExecute) {
       while (buffer.getPosition() < end && buffer.bytesLeft() > 0) {
         switch (buffer.readUnsignedByte()) {
           case CMD_COLORS:
@@ -454,8 +470,10 @@ public final class VobsubParser implements SubtitleParser {
             break;
           case CMD_FORCE_START:
           case CMD_START:
-          case CMD_STOP:
             // ignore unused commands without arguments
+            break;
+          case CMD_STOP:
+            endTimeMs = (delayExecute << 10) / 90;
             break;
           case CMD_END:
           default:
@@ -576,6 +594,7 @@ public final class VobsubParser implements SubtitleParser {
           .setLineAnchor(Cue.ANCHOR_TYPE_START)
           .setSize((float) boundingBox.width() / planeWidth)
           .setBitmapHeight((float) boundingBox.height() / planeHeight)
+          .setEndTimeMs(endTimeMs)
           .build();
     }
 

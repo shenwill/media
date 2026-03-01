@@ -183,6 +183,7 @@ public final class Cue implements Bundleable {
   @Nullable public Bitmap bitmap;
 
   public IBitmapDrawContext bitmapDrawContext;
+  public int endTimeMs;
 
   public interface IBitmapDrawContext {
     Bitmap draw();
@@ -322,6 +323,7 @@ public final class Cue implements Bundleable {
       @Nullable Alignment multiRowAlignment,
       @Nullable Bitmap bitmap,
       @Nullable IBitmapDrawContext bitmapDrawContext,
+      int endTimeMs,
       float line,
       @LineType int lineType,
       @AnchorType int lineAnchor,
@@ -365,6 +367,7 @@ public final class Cue implements Bundleable {
     this.verticalType = verticalType;
     this.shearDegrees = shearDegrees;
     this.bitmapDrawContext = bitmapDrawContext;
+    this.endTimeMs = endTimeMs;
   }
 
   /** Returns a new {@link Cue.Builder} initialized with the same values as this Cue. */
@@ -431,6 +434,7 @@ public final class Cue implements Bundleable {
     @Nullable private CharSequence text;
     @Nullable private Bitmap bitmap;
     @Nullable private IBitmapDrawContext bitmapDrawContext;
+    private int endTimeMs;
     @Nullable private Alignment textAlignment;
     @Nullable private Alignment multiRowAlignment;
     private float line;
@@ -470,6 +474,7 @@ public final class Cue implements Bundleable {
       text = cue.text;
       bitmap = cue.bitmap;
       bitmapDrawContext = cue.bitmapDrawContext;
+      endTimeMs = cue.endTimeMs;
       textAlignment = cue.textAlignment;
       multiRowAlignment = cue.multiRowAlignment;
       line = cue.line;
@@ -535,6 +540,11 @@ public final class Cue implements Bundleable {
 
     public Builder setBitmapDrawContext(IBitmapDrawContext bitmapDrawContext) {
       this.bitmapDrawContext = bitmapDrawContext;
+      return this;
+    }
+
+    public Builder setEndTimeMs(int endTimeMs) {
+      this.endTimeMs = endTimeMs;
       return this;
     }
 
@@ -830,6 +840,7 @@ public final class Cue implements Bundleable {
           multiRowAlignment,
           bitmap,
           bitmapDrawContext,
+          endTimeMs,
           line,
           lineType,
           lineAnchor,
