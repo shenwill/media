@@ -61,7 +61,8 @@ public interface TsPayloadReader {
      *     {@code null} if the stream is not supported.
      */
     @Nullable
-    TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo, @TsExtractor.Mode int mode);
+    TsPayloadReader createPayloadReader(
+        int streamType, EsInfo esInfo, @TsExtractor.Mode int mode, String language);
   }
 
   /** Holds information associated with a PMT entry. */

@@ -352,6 +352,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     }
     boolean[] trackEnabledStates = trackState.trackEnabledStates;
     int trackCount = sampleQueues.length;
+    trackCount = Math.min(trackCount, trackEnabledStates.length);
     for (int i = 0; i < trackCount; i++) {
       sampleQueues[i].discardTo(positionUs, toKeyframe, trackEnabledStates[i]);
     }
@@ -410,6 +411,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     if (haveAudioVideoTracks) {
       // Ignore non-AV tracks, which may be sparse or poorly interleaved.
       int trackCount = sampleQueues.length;
+      trackCount = Math.min(trackCount, trackState.trackEnabledStates.length);
       for (int i = 0; i < trackCount; i++) {
         if (trackState.trackIsAudioVideoFlags[i]
             && trackState.trackEnabledStates[i]
@@ -712,10 +714,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     handler.post(() -> setSeekMap(seekMap));
   }
 
+  ChapterTocFrame chapterTocFrame;
+
   @Override
   public void chapters(long[] startTimes, String[] titles) {
-    if (sampleQueues == null || sampleQueues.length == 0
-        || startTimes == null || startTimes.length == 0) {
+    if (startTimes == null || startTimes.length == 0) {
       return;
     }
     int length = startTimes.length;
@@ -731,14 +734,20 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       }
       subChapterFrames[i] = new ChapterFrame("", startTimeMs, endTimeMs, 0, 0, subFrames);
     }
-    ChapterTocFrame chapterTocFrame =
+    chapterTocFrame =
         new ChapterTocFrame("", true, true, new String[length], subChapterFrames);
+
+    if (sampleQueues == null || sampleQueues.length == 0) {
+      return;
+    }
     for (int i = 0; i < sampleQueues.length; i++) {
       Format format = sampleQueues[i].getUpstreamFormat();
-      Metadata metadata = format.metadata;
-      Metadata newMetadata = metadata != null ? metadata.copyWithAppendedEntries(chapterTocFrame)
-          : new Metadata(chapterTocFrame);
-      sampleQueues[i].format(format.buildUpon().setMetadata(newMetadata).build());
+      if (format != null && MimeTypes.isVideo(format.sampleMimeType)) {
+        Metadata metadata = format.metadata;
+        Metadata newMetadata = metadata != null ? metadata.copyWithAppendedEntries(chapterTocFrame)
+            : new Metadata(chapterTocFrame);
+        sampleQueues[i].format(format.buildUpon().setMetadata(newMetadata).build());
+      }
     }
   }
 
@@ -842,6 +851,14 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
         }
       }
       trackFormat = trackFormat.copyWithCryptoType(drmSessionManager.getCryptoType(trackFormat));
+
+      if (chapterTocFrame != null && MimeTypes.isVideo(mimeType)) {
+        Metadata metadata = trackFormat.metadata;
+        Metadata newMetadata = metadata != null ? metadata.copyWithAppendedEntries(chapterTocFrame)
+            : new Metadata(chapterTocFrame);
+        trackFormat = trackFormat.buildUpon().setMetadata(newMetadata).build();
+      }
+
       trackArray[i] = new TrackGroup(/* id= */ Integer.toString(i), trackFormat);
     }
     trackState = new TrackState(new TrackGroupArray(trackArray), trackIsAudioVideoFlags);

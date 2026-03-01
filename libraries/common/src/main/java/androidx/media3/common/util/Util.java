@@ -127,6 +127,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Formatter;
 import java.util.GregorianCalendar;
@@ -2819,6 +2820,18 @@ public final class Util {
         : formatter.format("%s%02d:%02d", prefix, minutes, seconds).toString();
   }
 
+  public static final StringBuilder formatBuilder = new StringBuilder();
+  public static final Formatter formatter = new Formatter(formatBuilder, Locale.getDefault());
+
+  public static String timeString(long timeMs) {
+    return timeString(timeMs, true);
+  }
+
+  public static String timeString(long timeMs, boolean ms) {
+    return (timeMs < 0 ? "-" : "")
+        + getStringForTime(formatBuilder, formatter, timeMs < 0 ? -timeMs : timeMs, ms);
+  }
+
   /**
    * Escapes a string so that it's safe for use as a file or directory name on at least FAT32
    * filesystems. FAT32 is the most restrictive of all filesystems still commonly used today.
@@ -2967,6 +2980,45 @@ public final class Util {
   @UnstableApi
   public static File createTempFile(Context context, String prefix) throws IOException {
     return File.createTempFile(prefix, null, checkNotNull(context.getCacheDir()));
+  }
+
+  public static byte[] concatBytes(String fourcc, Collection<byte[]> list) {
+    if (list == null) {
+      return new byte[0];
+    }
+    byte[] fourccBytes = fourcc.getBytes();
+    int length = 1 + fourccBytes.length + 4 + 4 * list.size();
+    for (byte[] bytes : list) {
+      length += bytes.length;
+    }
+    ByteBuffer buffer = ByteBuffer.allocate(length).put((byte) 0x56).put(fourccBytes);
+    buffer.putInt(list.size());
+    for (byte[] bytes : list) {
+      buffer.putInt(bytes.length);
+      System.arraycopy(bytes, 0, buffer.array(), buffer.position(), bytes.length);
+      buffer.position(buffer.position() + bytes.length);
+    }
+    return buffer.array();
+  }
+
+  public static byte[][] splitBytes(String fourccExpected, byte[] bytes) {
+    if (bytes == null || bytes.length < 9 || bytes[0] != 0x56) {
+      return null;
+    }
+    ParsableByteArray ba = new ParsableByteArray(bytes);
+    ba.skipBytes(1);
+    String fourcc = ba.readString(4);
+    if (fourccExpected != null && !fourccExpected.equals(fourcc)) {
+      return null;
+    }
+    int bytesArrayCount = ba.readInt();
+    byte[][] bytesArray = new byte[bytesArrayCount][];
+    for (int i = 0; i < bytesArrayCount; i++) {
+      int bytesLength = ba.readInt();
+      bytesArray[i] = new byte[bytesLength];
+      ba.readBytes(bytesArray[i], 0, bytesLength);
+    }
+    return bytesArray;
   }
 
   /**

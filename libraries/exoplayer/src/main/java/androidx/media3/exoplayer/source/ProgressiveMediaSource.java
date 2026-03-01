@@ -18,7 +18,9 @@ package androidx.media3.exoplayer.source;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Looper;
+
 import androidx.annotation.GuardedBy;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
@@ -37,6 +39,7 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy;
 import androidx.media3.extractor.DefaultExtractorsFactory;
 import androidx.media3.extractor.Extractor;
 import androidx.media3.extractor.ExtractorsFactory;
+
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 
 /**
@@ -60,6 +63,7 @@ public final class ProgressiveMediaSource extends BaseMediaSource
 
     private final DataSource.Factory dataSourceFactory;
 
+    private ExtractorsFactory extractorsFactory;
     private ProgressiveMediaExtractor.Factory progressiveMediaExtractorFactory;
     private DrmSessionManagerProvider drmSessionManagerProvider;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
@@ -100,7 +104,13 @@ public final class ProgressiveMediaSource extends BaseMediaSource
      *     the media from its container.
      */
     public Factory(DataSource.Factory dataSourceFactory, ExtractorsFactory extractorsFactory) {
-      this(dataSourceFactory, playerId -> new BundledExtractorsAdapter(extractorsFactory));
+      this(dataSourceFactory, (playerId, info) -> {
+          if (extractorsFactory instanceof DefaultExtractorsFactory) {
+              ((DefaultExtractorsFactory) extractorsFactory).setPsExtractorInfo(info);
+              ((DefaultExtractorsFactory) extractorsFactory).setTsExtractorInfo(info);
+          }
+          return new BundledExtractorsAdapter(extractorsFactory);
+      });
     }
 
     /**
@@ -300,10 +310,12 @@ public final class ProgressiveMediaSource extends BaseMediaSource
       dataSource.addTransferListener(transferListener);
     }
     MediaItem.LocalConfiguration localConfiguration = getLocalConfiguration();
+    MediaItem mediaItem = getMediaItem();
+    Bundle info = mediaItem.mediaMetadata != null ? mediaItem.mediaMetadata.extras : null;
     return new ProgressiveMediaPeriod(
         localConfiguration.uri,
         dataSource,
-        progressiveMediaExtractorFactory.createProgressiveMediaExtractor(getPlayerId()),
+        progressiveMediaExtractorFactory.createProgressiveMediaExtractor(getPlayerId(), info),
         drmSessionManager,
         createDrmEventDispatcher(id),
         loadableLoadErrorHandlingPolicy,

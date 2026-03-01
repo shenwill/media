@@ -24,6 +24,26 @@ import androidx.media3.common.util.UnstableApi;
 @UnstableApi
 public final class TsUtil {
 
+  public static long dvdTimeToUs(int dvdT) {
+    return dvdTimeToUs((dvdT >> 24) & 0xff, (dvdT >> 16) & 0xff, (dvdT >> 8) & 0xff, dvdT & 0xff);
+  }
+
+  public static long dvdTimeToUs(int hour, int minute, int second, int frameUnit) {
+    double[] frames_per_s = {-1.0, 25.00, -1.0, 30};
+    int fpsIndex = (frameUnit & 0xc0) >> 6;
+    double fps = frames_per_s[fpsIndex];
+    long us;
+    us = (((hour & 0xf0) >> 3) * 5 + (hour & 0x0f)) * 3600_000_000L;
+    us += (((minute & 0xf0) >> 3) * 5 + (minute & 0x0f)) * 60_000_000L;
+    us += (((second & 0xf0) >> 3) * 5 + (second & 0x0f)) * 1_000_000L;
+
+    if (fps > 0) {
+      us += (((frameUnit & 0x30) >> 3) * 5 +
+          (frameUnit & 0x0f)) * 1000_000.0 / fps;
+    }
+    return fpsIndex == 3 ? us * 1001 / 1000 : us;
+  }
+
   /**
    * Returns whether a TS packet starts at {@code searchPosition} according to the MPEG-TS
    * synchronization recommendations.

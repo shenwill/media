@@ -43,7 +43,14 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /** Parses a continuous DTS or DTS UHD byte stream and extracts individual samples. */
 @UnstableApi
-public final class DtsReader implements ElementaryStreamReader {
+public final class DtsReader
+    implements ElementaryStreamReader , ElementaryStreamReaderStub.IFormatOutput {
+
+  @Override
+  public void outputFormat(Format format) {
+    this.format = format.buildUpon().setId(formatId).build();
+    this.output.format(format);
+  }
 
   private static final int STATE_FINDING_SYNC = 0;
   private static final int STATE_READING_CORE_HEADER = 1;
@@ -141,8 +148,13 @@ public final class DtsReader implements ElementaryStreamReader {
     sampleRechunker.reset();
   }
 
+  private boolean trackCreated;
   @Override
   public void createTracks(ExtractorOutput extractorOutput, TrackIdGenerator idGenerator) {
+    if (trackCreated) {
+      return;
+    }
+    trackCreated = true;
     idGenerator.generateNewId();
     formatId = idGenerator.getFormatId();
     output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_AUDIO);

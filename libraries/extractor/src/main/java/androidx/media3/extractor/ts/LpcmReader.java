@@ -43,6 +43,7 @@ public final class LpcmReader implements ElementaryStreamReader {
   private static final int STATE_READING_SAMPLE = 1;
 
   @Nullable private final String language;
+  private final boolean pcmBluRay;
   private final ParsableByteArray headerBuffer;
 
   // Track output info.
@@ -51,8 +52,8 @@ public final class LpcmReader implements ElementaryStreamReader {
   private @MonotonicNonNull Format format;
 
   // Header data.
-  private int bitsPerSample;
-  private int channelCount;
+  private int bitsPerSample, bytesPerSamplePerChannel;
+  private int channelCount, inputChannelCount;
   private long frameDurationUs;
   private int sampleRateHz;
 
@@ -65,9 +66,10 @@ public final class LpcmReader implements ElementaryStreamReader {
   /**
    * @param language Track language.
    */
-  public LpcmReader(@Nullable String language) {
+  public LpcmReader(@Nullable String language, boolean pcmBluRay) {
     this.language = language;
     headerBuffer = new ParsableByteArray(new byte[4], 0);
+    this.pcmBluRay = pcmBluRay;
     timeUs = C.TIME_UNSET;
   }
 
@@ -118,11 +120,36 @@ public final class LpcmReader implements ElementaryStreamReader {
           }
           break;
         case STATE_READING_SAMPLE:
-          bytesToRead = min(data.bytesLeft(), frameSize - bytesRead);
-          output.sampleData(data, bytesToRead);
-          bytesRead += bytesToRead;
+          // For Blu-ray, PCM data storage are for pairs of channels,
+          // so 1 channel costs 2 channels capacity, 2 cost 2, 3 cost 4, ..., 7 cost 8, 8 cost 8
+          boolean skipExtraBytes = inputChannelCount > channelCount;
+          if (skipExtraBytes) {
+            int inputBytesPerSample = bytesPerSamplePerChannel * inputChannelCount;
+            int outputBytesPerSample = bytesPerSamplePerChannel * channelCount;
+            while ((bytesToRead = min(data.bytesLeft(), frameSize - bytesRead)) > 0) {
+              int currentSampleBytesRead = bytesRead % inputBytesPerSample;
+              boolean shouldSkip = currentSampleBytesRead >= outputBytesPerSample;
+              if (shouldSkip) {
+                bytesToRead = min(bytesToRead, inputBytesPerSample - currentSampleBytesRead);
+                data.skipBytes(bytesToRead);
+              } else {
+                bytesToRead = min(bytesToRead, outputBytesPerSample - currentSampleBytesRead);
+                output.sampleData(data, bytesToRead);
+              }
+              bytesRead += bytesToRead;
+            }
+          } else {
+            bytesToRead = min(data.bytesLeft(), frameSize - bytesRead);
+            output.sampleData(data, bytesToRead);
+            bytesRead += bytesToRead;
+          }
           if (bytesRead == frameSize) {
-            output.sampleMetadata(timeUs, C.BUFFER_FLAG_KEY_FRAME, frameSize, 0, null);
+            int inputBytesPerSample = bytesPerSamplePerChannel * inputChannelCount;
+            assert frameSize % inputBytesPerSample == 0;
+            int samples = frameSize / inputBytesPerSample;
+            int sizeOut = !skipExtraBytes ? frameSize
+                : frameSize - samples * bytesPerSamplePerChannel;
+            output.sampleMetadata(timeUs, C.BUFFER_FLAG_KEY_FRAME, sizeOut, 0, null);
             timeUs += frameDurationUs;
             state = STATE_READING_HEADER;
           }
@@ -156,12 +183,12 @@ public final class LpcmReader implements ElementaryStreamReader {
   }
 
   /*
-  size in bytes = 16 bits
-  channel assignment = 4 bits
-  sampling frequency = 4 bits
-  bits per sample = 2 bits
-  start flag = 1 bit
-  reserved = 5 bits
+  size in bytes = 16 bits.
+  channel assignment = 4 bits.
+  sampling frequency = 4 bits.
+  bits per sample = 2 bits.
+  start flag = 1 bit.
+  reserved = 5 bits.
 
   channel assignment
   1 = mono
@@ -198,11 +225,13 @@ public final class LpcmReader implements ElementaryStreamReader {
     if (channelCount == -1 || sampleRateHz == -1 || bitsPerSample == -1) {
       return false;
     }
-    int bytesPerSampleAllChannels = Math.round(bitsPerSample / 8.f) * channelCount;
-    if (frameSize % bytesPerSampleAllChannels != 0) {
+    bytesPerSamplePerChannel = (bitsPerSample + 4) / 8;
+    inputChannelCount = pcmBluRay ? (channelCount + 1) / 2 * 2 : channelCount;
+    int inputBytesPerSample = bytesPerSamplePerChannel * inputChannelCount;
+    if (frameSize % inputBytesPerSample != 0) {
       return false;
     }
-    frameDurationUs = C.MICROS_PER_SECOND * (frameSize / bytesPerSampleAllChannels) / sampleRateHz;
+    frameDurationUs = C.MICROS_PER_SECOND * (frameSize / inputBytesPerSample) / sampleRateHz;
     return frameDurationUs <= 500_000;
   }
 

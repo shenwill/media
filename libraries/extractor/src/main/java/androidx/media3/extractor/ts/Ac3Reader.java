@@ -43,7 +43,14 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /** Parses a continuous (E-)AC-3 byte stream and extracts individual samples. */
 @UnstableApi
-public final class Ac3Reader implements ElementaryStreamReader {
+public final class Ac3Reader
+    implements ElementaryStreamReader, ElementaryStreamReaderStub.IFormatOutput {
+
+  @Override
+  public void outputFormat(Format format) {
+    this.format = format.buildUpon().setId(formatId).build();
+    this.output.format(format);
+  }
 
   @Documented
   @Retention(RetentionPolicy.SOURCE)
@@ -104,8 +111,14 @@ public final class Ac3Reader implements ElementaryStreamReader {
     timeUs = C.TIME_UNSET;
   }
 
+  private boolean trackCreated;
+
   @Override
   public void createTracks(ExtractorOutput extractorOutput, TrackIdGenerator idGenerator) {
+    if (trackCreated) {
+      return;
+    }
+    trackCreated = true;
     idGenerator.generateNewId();
     formatId = idGenerator.getFormatId();
     output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_AUDIO);
@@ -117,7 +130,9 @@ public final class Ac3Reader implements ElementaryStreamReader {
 
   @Override
   public void packetStarted(long pesTimeUs, @TsPayloadReader.Flags int flags) {
-    timeUs = pesTimeUs;
+    if (pesTimeUs != C.TIME_UNSET) {
+      timeUs = pesTimeUs;
+    }
   }
 
   @Override
@@ -134,11 +149,16 @@ public final class Ac3Reader implements ElementaryStreamReader {
           }
           break;
         case STATE_READING_HEADER:
+          try{
           if (continueRead(data, headerScratchBytes.getData(), HEADER_SIZE)) {
             parseHeader();
             headerScratchBytes.setPosition(0);
             output.sampleData(headerScratchBytes, HEADER_SIZE);
             state = STATE_READING_SAMPLE;
+          }
+          } catch (Exception e) {
+            e.printStackTrace();
+            state = STATE_FINDING_SYNC;
           }
           break;
         case STATE_READING_SAMPLE:

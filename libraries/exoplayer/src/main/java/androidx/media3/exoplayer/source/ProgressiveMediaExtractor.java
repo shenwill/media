@@ -16,6 +16,8 @@
 package androidx.media3.exoplayer.source;
 
 import android.net.Uri;
+import android.os.Bundle;
+
 import androidx.media3.common.C;
 import androidx.media3.common.DataReader;
 import androidx.media3.common.util.UnstableApi;
@@ -39,7 +41,7 @@ public interface ProgressiveMediaExtractor {
      *
      * @param playerId The {@link PlayerId} of the player this extractor is used for.
      */
-    ProgressiveMediaExtractor createProgressiveMediaExtractor(PlayerId playerId);
+    ProgressiveMediaExtractor createProgressiveMediaExtractor(PlayerId playerId, Bundle info);
   }
 
   /**

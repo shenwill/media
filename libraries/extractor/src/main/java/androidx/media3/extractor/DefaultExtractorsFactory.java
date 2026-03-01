@@ -21,6 +21,7 @@ import static androidx.media3.extractor.mp4.Mp4Extractor.FLAG_READ_MOTION_PHOTO_
 import static androidx.media3.extractor.mp4.Mp4Extractor.FLAG_READ_SEF_DATA;
 
 import android.net.Uri;
+import android.os.Bundle;
 
 import androidx.annotation.GuardedBy;
 import androidx.annotation.Nullable;
@@ -155,6 +156,8 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
   private @TsExtractor.Mode int tsMode;
   private @DefaultTsPayloadReaderFactory.Flags int tsFlags;
   // TODO (b/261183220): Initialize tsSubtitleFormats in constructor once shrinking bug is fixed.
+  private Bundle psExtractorInfo;
+  private Bundle tsExtractorInfo;
   private @WavExtractor.Flags int wavFlags;
   @Nullable private ImmutableList<Format> tsSubtitleFormats;
   private int tsTimestampSearchBytes;
@@ -336,6 +339,16 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
     return this;
   }
 
+  public synchronized DefaultExtractorsFactory setPsExtractorInfo(Bundle info) {
+    psExtractorInfo = info;
+    return this;
+  }
+
+  public synchronized DefaultExtractorsFactory setTsExtractorInfo(Bundle info) {
+    tsExtractorInfo = info;
+    return this;
+  }
+
   public synchronized DefaultExtractorsFactory setWavExtractorFlags(
       @WavExtractor.Flags int flags) {
     wavFlags = flags;
@@ -427,6 +440,9 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
   @Override
   public synchronized Extractor[] createExtractors(
       Uri uri, Map<String, List<String>> responseHeaders) {
+    if (tsExtractorInfo != null) {
+      tsExtractorInfo.putParcelable("UriToCreateExtractors", uri);
+    }
     List<Extractor> extractors =
         new ArrayList<>(/* initialCapacity= */ DEFAULT_EXTRACTOR_ORDER.length);
 
@@ -523,7 +539,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         extractors.add(new OggExtractor());
         break;
       case FileTypes.PS:
-        extractors.add(new PsExtractor());
+        extractors.add(new PsExtractor(psExtractorInfo));
         break;
       case FileTypes.TS:
         if (tsSubtitleFormats == null) {
@@ -534,14 +550,16 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
                 tsMode,
                 new TimestampAdjuster(0),
                 new DefaultTsPayloadReaderFactory(tsFlags, tsSubtitleFormats),
-                tsTimestampSearchBytes));
+                tsTimestampSearchBytes,
+                null));
         break;
       case FileTypes.M2TS:
         extractors.add(
             new TsExtractor(
                 TsExtractor.MODE_M2TS,
                 DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS,
-                TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES));
+                TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES,
+                tsExtractorInfo));
         break;
       case FileTypes.WAV:
         extractors.add(new WavExtractor(wavFlags));

@@ -18,7 +18,10 @@ package androidx.media3.extractor.ts;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkStateNotNull;
 
+import android.util.Log;
 import android.util.Pair;
+import android.util.SparseIntArray;
+
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
@@ -30,13 +33,21 @@ import androidx.media3.container.NalUnitUtil;
 import androidx.media3.extractor.ExtractorOutput;
 import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator;
+
+import com.google.common.primitives.Longs;
+
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import java.util.List;
 
 /** Parses a continuous H262 byte stream and extracts individual frames. */
 @UnstableApi
 public final class H262Reader implements ElementaryStreamReader {
+
+  private static final String TAG = "H262Reader";
 
   private static final int START_PICTURE = 0x00;
   private static final int START_SEQUENCE_HEADER = 0xB3;
@@ -44,18 +55,32 @@ public final class H262Reader implements ElementaryStreamReader {
   private static final int START_GROUP = 0xB8;
   private static final int START_USER_DATA = 0xB2;
 
+  private static final int PICTURE_TYPE_FRAME = 0x03;
+  private static final int PICTURE_TYPE_TOP_FIELD = 0x01;
+  private static final int PICTURE_TYPE_BOTTOM_FIELD = 0x02;
+
+  private static final int FRAME_I = 1;
+  private static final int FRAME_P = 2;
+  private static final int FRAME_B = 3;
+
   private @MonotonicNonNull String formatId;
   private @MonotonicNonNull TrackOutput output;
+  private @MonotonicNonNull ExtractorOutput extractorOutput;
 
   // Maps (frame_rate_code - 1) indices to values, as defined in ITU-T H.262 Table 6-4.
   private static final double[] FRAME_RATE_VALUES =
-      new double[] {24000d / 1001, 24, 25, 30000d / 1001, 30, 50, 60000d / 1001, 60};
+      new double[]{24000d / 1001, 24, 25, 30000d / 1001, 30, 50, 60000d / 1001, 60};
 
-  @Nullable private final UserDataReader userDataReader;
-  @Nullable private final ParsableByteArray userDataParsable;
+  @Nullable
+  private final UserDataReader userDataReader;
+  @Nullable
+  private final ParsableByteArray userDataParsable;
 
+  @Nullable
+  private final long[] chapterTimesNs;
   // State that should be reset on seek.
-  @Nullable private final NalUnitTargetBuffer userData;
+  @Nullable
+  private final NalUnitTargetBuffer userData;
   private final boolean[] prefixFlags;
   private final CsdBuffer csdBuffer;
   private long totalBytesWritten;
@@ -64,6 +89,8 @@ public final class H262Reader implements ElementaryStreamReader {
   // State that should not be reset on seek.
   private boolean hasOutputFormat;
   private long frameDurationUs;
+  private boolean progressiveSequence;
+
 
   // Per packet state that gets reset at the start of each packet.
   private long pesTimeUs;
@@ -71,14 +98,24 @@ public final class H262Reader implements ElementaryStreamReader {
   // Per sample state that gets reset at the start of each sample.
   private long samplePosition;
   private long sampleTimeUs;
+  private long sampleTimeBaseUs;
   private boolean sampleIsKeyframe;
   private boolean sampleHasPicture;
+  private boolean adjPts;
+  private int firstFieldSampleSize = 0;
+  private int frameCount;
+
+  // per every picture
+  private MPEG2PictureHeader pictureHeader;
+  private int fieldCount;
+  private int pictureIndex;
 
   public H262Reader() {
-    this(null);
+    this(null, null, false);
   }
 
-  /* package */ H262Reader(@Nullable UserDataReader userDataReader) {
+  /* package */ H262Reader(
+      @Nullable UserDataReader userDataReader, byte[][] initDataBytes, boolean adjPts) {
     this.userDataReader = userDataReader;
     prefixFlags = new boolean[4];
     csdBuffer = new CsdBuffer(128);
@@ -89,8 +126,11 @@ public final class H262Reader implements ElementaryStreamReader {
       userData = null;
       userDataParsable = null;
     }
+    chapterTimesNs = getChapterTimesNs(initDataBytes);
+    frameDurationUs = C.LENGTH_UNSET;
     pesTimeUs = C.TIME_UNSET;
     sampleTimeUs = C.TIME_UNSET;
+    this.adjPts = adjPts;
   }
 
   @Override
@@ -104,11 +144,15 @@ public final class H262Reader implements ElementaryStreamReader {
     startedFirstSample = false;
     pesTimeUs = C.TIME_UNSET;
     sampleTimeUs = C.TIME_UNSET;
+    sampleTimeBaseUs = C.TIME_UNSET;
+    progressiveSequence = false;
+    frameCount = 0;
   }
 
   @Override
   public void createTracks(ExtractorOutput extractorOutput, TrackIdGenerator idGenerator) {
     idGenerator.generateNewId();
+    this.extractorOutput = extractorOutput;
     formatId = idGenerator.getFormatId();
     output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_VIDEO);
     if (userDataReader != null) {
@@ -138,7 +182,7 @@ public final class H262Reader implements ElementaryStreamReader {
 
       if (startCodeOffset == limit) {
         // We've scanned to the end of the data without finding another start code.
-        if (!hasOutputFormat) {
+        if (csdBuffer.isFilling) {
           csdBuffer.onData(dataArray, offset, limit);
         }
         if (userData != null) {
@@ -153,18 +197,26 @@ public final class H262Reader implements ElementaryStreamReader {
       // code. It may be negative if the start code started in the previously consumed data.
       int lengthToStartCode = startCodeOffset - offset;
 
-      if (!hasOutputFormat) {
+      //deal with sequence header (for picture size, ratio, rate...) and picture header (I, P, B)
+      if (!hasOutputFormat || csdBuffer.isFilling
+          || (startCodeValue == START_PICTURE || startCodeValue == START_EXTENSION)) {
         if (lengthToStartCode > 0) {
           csdBuffer.onData(dataArray, offset, startCodeOffset);
         }
         // This is the number of bytes belonging to the next start code that have already been
         // passed to csdBuffer.
         int bytesAlreadyPassed = lengthToStartCode < 0 ? -lengthToStartCode : 0;
-        if (csdBuffer.onStartCode(startCodeValue, bytesAlreadyPassed)) {
+        boolean completed = csdBuffer.onStartCode(startCodeValue, bytesAlreadyPassed);
+        if (completed && csdBuffer.codeFilling == START_PICTURE) {
+          parseCsdBufferForPictureHeader(csdBuffer);
+        }
+        if (!hasOutputFormat && completed && csdBuffer.codeFilling == START_SEQUENCE_HEADER) {
           // The csd data is complete, so we can decode and output the media format.
-          Pair<Format, Long> result = parseCsdBuffer(csdBuffer, checkNotNull(formatId));
+          Pair<Format, Pair> result = parseCsdBuffer(csdBuffer, checkNotNull(formatId));
           output.format(result.first);
-          frameDurationUs = result.second;
+          extractorOutput.chapters(chapterTimesNs, null);
+          frameDurationUs = (long) result.second.first;
+          progressiveSequence = (boolean) result.second.second;
           hasOutputFormat = true;
         }
       }
@@ -192,7 +244,29 @@ public final class H262Reader implements ElementaryStreamReader {
           // Output the sample.
           @C.BufferFlags int flags = sampleIsKeyframe ? C.BUFFER_FLAG_KEY_FRAME : 0;
           int size = (int) (totalBytesWritten - samplePosition) - bytesWrittenPastStartCode;
-          output.sampleMetadata(sampleTimeUs, flags, size, bytesWrittenPastStartCode, null);
+          long timeUs = sampleTimeUs;
+          if (adjPts && sampleTimeBaseUs != C.TIME_UNSET) {
+            if (pictureHeader.pictureIndex == 0) {
+              timeUs = sampleTimeBaseUs;
+              sampleTimeBaseUs = timeUs - getTimestampOffsetUs(pictureHeader.temporalReference);
+            } else if (pictureHeader.temporalReference != pictureHeader.pictureIndex) {
+              timeUs = sampleTimeBaseUs + getTimestampOffsetUs(pictureHeader.temporalReference);
+            }
+          }
+          if (isFrameCompleted()) {
+            size += firstFieldSampleSize;
+            output.sampleMetadata(timeUs, flags, size, bytesWrittenPastStartCode, null);
+            //Log.i(TAG, frameTypesByFieldStringBuilder.charAt(frameTypesByFieldStringBuilder.length() - 1)
+            //    + " " + pictureHeader.temporalReference + "-" + pictureHeader.pictureIndex
+            //    + "---===sampleMetadata timeUs=" + timeUs + " size=" + size
+            //    + " flags=" + flags + " startCodeValue=" + Integer.toHexString(startCodeValue)
+            //    + " bytesWrittenPastStartCode=" + bytesWrittenPastStartCode);
+            sampleIsKeyframe = false;
+            firstFieldSampleSize = 0;
+            frameCount++;
+          } else {
+            firstFieldSampleSize = size;
+          }
         }
         if (!startedFirstSample || sampleHasPicture) {
           // Start the next sample.
@@ -201,15 +275,25 @@ public final class H262Reader implements ElementaryStreamReader {
               pesTimeUs != C.TIME_UNSET
                   ? pesTimeUs
                   : (sampleTimeUs != C.TIME_UNSET
-                      ? (sampleTimeUs + frameDurationUs)
-                      : C.TIME_UNSET);
-          sampleIsKeyframe = false;
+                  ? (sampleTimeUs + getFrameDurationUs(pictureHeader.temporalReference))
+                  : C.TIME_UNSET);
+          if (pesTimeUs != C.TIME_UNSET) {
+            sampleTimeBaseUs = pesTimeUs;
+          }
           pesTimeUs = C.TIME_UNSET;
           startedFirstSample = true;
         }
         sampleHasPicture = startCodeValue == START_PICTURE;
       } else if (startCodeValue == START_GROUP) {
         sampleIsKeyframe = true;
+        fieldCount = 0;
+        pictureIndex = 0;
+      } else if (startCodeValue == START_USER_DATA) {
+        // Log.i("H262", "---===startCodeValue START_USER_DATA");
+      } else if (startCodeValue == 0xB7) {
+        // Log.i("H262", "---===Sequence End Code");
+      } else if (startCodeValue > 0x2f && startCodeValue != START_EXTENSION) {
+        Log.i(TAG, "---===startCodeValue not handled: 0x" + Integer.toHexString(startCodeValue));
       }
 
       offset = startCodeOffset + 3;
@@ -226,6 +310,180 @@ public final class H262Reader implements ElementaryStreamReader {
     }
   }
 
+  private StringBuilder frameTypesByFieldStringBuilder = new StringBuilder();
+  private StringBuilder frameTypesByFrameStringBuilder = new StringBuilder();
+
+  private void debugPrintIPB() {
+    if (frameCount < 100) {
+      if (pictureHeader != null) {
+        int type = pictureHeader.frameType;
+        char t = type == FRAME_I ? 'I' : type == FRAME_P ? 'P' : type == FRAME_B ? 'B' : '?';
+        frameTypesByFieldStringBuilder.append(t);
+        if (isFrameCompleted()) {
+          frameTypesByFrameStringBuilder.append(t);
+        }
+        Log.i("H262Reader", "---===frameType=" + t);
+        if (frameCount == 99) {
+          Log.i("H262Reader", "---===frameTypes=" + frameTypesByFieldStringBuilder);
+          Log.i("H262Reader", "---===frameTypes=" + frameTypesByFrameStringBuilder);
+        }
+      }
+    }
+  }
+
+  private long[] getChapterTimesNs(byte[][] initDataBytes) {
+    byte[] bytes = initDataBytes != null ? initDataBytes[7] : null;
+    if (bytes == null || bytes.length == 0) {
+      return null;
+    }
+    long[] timesUs = new long[bytes.length / 8];
+    int p = 0;
+    for (int i = 0; i < timesUs.length; i++) {
+      timesUs[i] = Longs.fromBytes(
+          bytes[p++], bytes[p++], bytes[p++], bytes[p++],
+          bytes[p++], bytes[p++], bytes[p++], bytes[p++]);
+    }
+    return timesUs;
+  }
+
+  private SparseIntArray frameDurationFactors = new SparseIntArray(30);
+  private int lastPictureRepeatFirstFieldFactor = -1;
+  private int lastIndexPictureRepeatFirstFieldFactor = -1;
+
+  private long getFrameDurationFactor(int presentationIndex) {
+    int factor = 2;
+    int presentationFactor = frameDurationFactors.get(presentationIndex, -1);
+    if (presentationFactor != -1) {
+      factor = presentationFactor;
+    } else if (lastPictureRepeatFirstFieldFactor > 0 &&
+        (lastIndexPictureRepeatFirstFieldFactor - presentationIndex) % 2 == 0) {
+      factor = lastPictureRepeatFirstFieldFactor;
+    }
+    //Log.i(TAG, "---===presentationIndex=" + presentationIndex + " factor=" + factor);
+    return factor;
+  }
+
+  private void updateFrameDurationFactorCache() {
+    int factor = 2;
+    int presentationIndex = pictureHeader.temporalReference;
+    if (pictureHeader != null && pictureHeader.repeatFirstField) {
+      // progressive shall be true if repeatFirstField is true
+      if (progressiveSequence) {
+        factor = pictureHeader.topFieldFirst ? 6 : 4;
+      }
+      else {
+        factor = 3;
+      }
+      lastPictureRepeatFirstFieldFactor = factor;
+      lastIndexPictureRepeatFirstFieldFactor = presentationIndex;
+    }
+
+    if (pictureHeader != null) {
+      int value = frameDurationFactors.get(presentationIndex, -1);
+      if (value != factor) {
+        frameDurationFactors.put(presentationIndex, factor);
+        if (value != -1) {
+          invalidateTimestampOffsets(presentationIndex);
+        }
+      }
+    }
+  }
+
+  private long getFrameDurationUs(int presentationIndex) {
+    if (frameDurationUs == C.LENGTH_UNSET) {
+      return C.LENGTH_UNSET;
+    }
+    return frameDurationUs * getFrameDurationFactor(presentationIndex) / 2;
+  }
+
+  private SparseIntArray frameTimestampOffsetsUs = new SparseIntArray(30);
+
+  private int getTimestampOffsetUs(int presentIndex) {
+    int us = frameTimestampOffsetsUs.get(presentIndex, -1);
+    if (us >= 0) {
+      return us;
+    }
+    if (presentIndex == 0) {
+      us = 0;
+    } else {
+      us = getTimestampOffsetUs(presentIndex - 1);
+      us += getFrameDurationUs(presentIndex - 1);
+    }
+    frameTimestampOffsetsUs.put(presentIndex, us);
+    return us;
+  }
+
+  private void invalidateTimestampOffsets(int presentationIndex) {
+    List<Integer> keysToRemove = new ArrayList<>();
+    for (int i = 0; i < frameTimestampOffsetsUs.size(); i++) {
+      int key = frameTimestampOffsetsUs.keyAt(i);
+      if (key >= presentationIndex) {
+        keysToRemove.add(key);
+      }
+    }
+    for (int key : keysToRemove) {
+      frameTimestampOffsetsUs.delete(key);
+    }
+  }
+
+  private boolean isFrameCompleted() {
+    return pictureHeader == null || pictureHeader.pictureStructure == PICTURE_TYPE_FRAME
+        || (fieldCount & 0x1) == 0;
+  }
+
+  private boolean parseCsdBufferForPictureHeader(CsdBuffer csdBuffer){
+
+    byte[] csdData = Arrays.copyOf(csdBuffer.data, csdBuffer.length);
+    if (csdData.length < 7 || csdData[3] != START_PICTURE) {
+      return false;
+    }
+
+    pictureHeader = new MPEG2PictureHeader();
+    pictureHeader.pictureIndex = pictureIndex;
+    pictureIndex++;
+    int pos = 0;
+    boolean havePicExt = false;
+    int temp = 0;
+    pos += 4;
+    temp = (csdData[pos] << 8) | (csdData[pos + 1] & 0xC0);
+    pictureHeader.temporalReference = temp >> 6;
+    pos += 1;
+    temp = (csdData[pos] & 0x38) >> 3 ;
+    pictureHeader.frameType = temp & 0xff;
+
+    //Seek to extension
+    while (pos < (csdData.length - 4)) {
+      if (csdData[pos] == 0x00 && csdData[pos + 1] == 0x00 && csdData[pos + 2] == 0x01
+          && (csdData[pos + 3] & 0xff) == START_EXTENSION) {
+        if ((csdData[pos + 4] & 0xF0) == 0x80) { //Picture coding extension
+          //printf("Found a picture_coding_extension\n");
+          havePicExt = true;
+          break;
+        }
+      }
+      pos++;
+    }
+    if (!havePicExt) {
+      pictureHeader.pictureStructure = PICTURE_TYPE_FRAME;
+      pictureHeader.repeatFirstField = false;
+      pictureHeader.topFieldFirst = true;
+      pictureHeader.progressive = true;
+    } else {
+      pos += 4;//skip start code
+      pos += 2;//skip f_code shit
+      pictureHeader.pictureStructure = (csdData[pos] & 0x03);
+      pos++;
+      pictureHeader.topFieldFirst = (csdData[pos] & 0x80) > 0;
+      pictureHeader.repeatFirstField = (csdData[pos] & 0x02) > 0;
+      pos++;
+      pictureHeader.progressive = (csdData[pos] & 0x80) > 0;
+      fieldCount++;
+    }
+    updateFrameDurationFactorCache();
+    //debugPrintIPB();
+    return true;
+  }
+
   /**
    * Parses the {@link Format} and frame duration from a csd buffer.
    *
@@ -234,7 +492,7 @@ public final class H262Reader implements ElementaryStreamReader {
    * @return A pair consisting of the {@link Format} and the frame duration in microseconds, or 0 if
    *     the duration could not be determined.
    */
-  private static Pair<Format, Long> parseCsdBuffer(CsdBuffer csdBuffer, String formatId) {
+  private static Pair<Format, Pair> parseCsdBuffer(CsdBuffer csdBuffer, String formatId) {
     byte[] csdData = Arrays.copyOf(csdBuffer.data, csdBuffer.length);
 
     int firstByte = csdData[4] & 0xFF;
@@ -281,9 +539,25 @@ public final class H262Reader implements ElementaryStreamReader {
         frameRate *= (frameRateExtensionN + 1d) / (frameRateExtensionD + 1);
       }
       frameDurationUs = (long) (C.MICROS_PER_SECOND / frameRate);
+      format = format.buildUpon().setFrameRate((float) frameRate).build();
     }
 
-    return Pair.create(format, frameDurationUs);
+    //Seek to extension
+    int pos = 8;
+    boolean progressiveSequence = false;
+    while (pos < (csdData.length - 6)) {
+      if (csdData[pos] == 0x00 && csdData[pos + 1] == 0x00 && csdData[pos + 2] == 0x01
+          && (csdData[pos + 3] & 0xff) == START_EXTENSION) {
+        if((csdData[pos + 4] & 0xF0) == 0x10){ // Sequence extension
+          // profileLevelIndication = ((data[pos +4] & 0x0F) << 4) | ((data[pos + 5] & 0xF0) >> 4);
+          progressiveSequence = ((csdData[pos +5] & 0x08) >> 3) > 0;
+          break;
+        }
+      }
+      pos++;
+    }
+
+    return Pair.create(format, Pair.create(frameDurationUs, progressiveSequence));
   }
 
   private static final class CsdBuffer {
@@ -291,6 +565,7 @@ public final class H262Reader implements ElementaryStreamReader {
     private static final byte[] START_CODE = new byte[] {0, 0, 1};
 
     private boolean isFilling;
+    private int codeFilling = -1;
 
     public int length;
     public int sequenceExtensionPosition;
@@ -302,6 +577,7 @@ public final class H262Reader implements ElementaryStreamReader {
 
     /** Resets the buffer, clearing any data that it holds. */
     public void reset() {
+      codeFilling = -1;
       isFilling = false;
       length = 0;
       sequenceExtensionPosition = 0;
@@ -319,6 +595,17 @@ public final class H262Reader implements ElementaryStreamReader {
      */
     public boolean onStartCode(int startCodeValue, int bytesAlreadyPassed) {
       if (isFilling) {
+        if (codeFilling == START_PICTURE) {
+          length -= bytesAlreadyPassed;
+          if (sequenceExtensionPosition == 0 && startCodeValue == START_EXTENSION) {
+            sequenceExtensionPosition = length;
+            onData(START_CODE, 0, START_CODE.length);
+            return false;
+          } else {
+            isFilling = false;
+            return true;
+          }
+        }
         length -= bytesAlreadyPassed;
         if (sequenceExtensionPosition == 0 && startCodeValue == START_EXTENSION) {
           sequenceExtensionPosition = length;
@@ -326,7 +613,9 @@ public final class H262Reader implements ElementaryStreamReader {
           isFilling = false;
           return true;
         }
-      } else if (startCodeValue == START_SEQUENCE_HEADER) {
+      } else if (startCodeValue == START_SEQUENCE_HEADER || startCodeValue == START_PICTURE) {
+        reset();
+        codeFilling = startCodeValue;
         isFilling = true;
       }
       onData(START_CODE, 0, START_CODE.length);
@@ -352,4 +641,14 @@ public final class H262Reader implements ElementaryStreamReader {
       length += readLength;
     }
   }
+
+  private static class MPEG2PictureHeader {
+    int pictureIndex;
+    int temporalReference;
+    int frameType;
+    int pictureStructure;
+    boolean repeatFirstField;
+    boolean topFieldFirst;
+    boolean progressive;
+  };
 }

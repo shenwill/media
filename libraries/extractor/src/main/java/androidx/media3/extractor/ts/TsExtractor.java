@@ -19,11 +19,16 @@ import static androidx.media3.extractor.ts.TsPayloadReader.EsInfo.AUDIO_TYPE_UND
 import static androidx.media3.extractor.ts.TsPayloadReader.FLAG_PAYLOAD_UNIT_START_INDICATOR;
 import static java.lang.annotation.ElementType.TYPE_USE;
 
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Parcelable;
+import android.text.TextUtils;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 
 import androidx.annotation.IntDef;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.MimeTypes;
@@ -51,6 +56,7 @@ import androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -59,6 +65,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /** Extracts data from the MPEG-2 TS container format. */
 @UnstableApi
@@ -79,8 +86,10 @@ public final class TsExtractor implements Extractor {
   @Documented
   @Retention(RetentionPolicy.SOURCE)
   @Target(TYPE_USE)
-  @IntDef({MODE_MULTI_PMT, MODE_SINGLE_PMT, MODE_HLS, MODE_M2TS})
+  @IntDef({MODE_MULTI_PMT, MODE_SINGLE_PMT, MODE_HLS, MODE_M2TS, MODE_UNKNOWN})
   public @interface Mode {}
+
+  public static final int MODE_UNKNOWN = -1;
 
   /** Behave as defined in ISO/IEC 13818-1. */
   public static final int MODE_MULTI_PMT = 0;
@@ -187,6 +196,12 @@ public final class TsExtractor implements Extractor {
   private final SparseBooleanArray trackIds;
   private final SparseBooleanArray trackPids;
   private final TsDurationReader durationReader;
+  @Nullable
+  private final long[] chapterTimesNs;
+  private long durationUs = C.TIME_UNSET;
+  private final SparseArray<String> pidLangs; // Indexed by pid
+  private final Uri tsUri;
+  private byte[] clipTimeMapBytes;
 
   // Accessed only by the loading thread.
   private @MonotonicNonNull TsBinarySearchSeeker tsBinarySearchSeeker;
@@ -210,7 +225,8 @@ public final class TsExtractor implements Extractor {
         SubtitleParser.Factory.UNSUPPORTED,
         new TimestampAdjuster(0),
         new DefaultTsPayloadReaderFactory(/* defaultTsPayloadReaderFlags= */ 0),
-        DEFAULT_TIMESTAMP_SEARCH_BYTES);
+        DEFAULT_TIMESTAMP_SEARCH_BYTES,
+        null);
   }
 
   /**
@@ -226,7 +242,8 @@ public final class TsExtractor implements Extractor {
         subtitleParserFactory,
         new TimestampAdjuster(0),
         new DefaultTsPayloadReaderFactory(/* defaultTsPayloadReaderFlags= */ 0),
-        DEFAULT_TIMESTAMP_SEARCH_BYTES);
+        DEFAULT_TIMESTAMP_SEARCH_BYTES,
+        null);
   }
 
   /**
@@ -243,12 +260,13 @@ public final class TsExtractor implements Extractor {
         subtitleParserFactory,
         new TimestampAdjuster(0),
         new DefaultTsPayloadReaderFactory(/* defaultTsPayloadReaderFlags= */ 0),
-        DEFAULT_TIMESTAMP_SEARCH_BYTES);
+        DEFAULT_TIMESTAMP_SEARCH_BYTES,
+        null);
   }
 
   /**
    * @deprecated Use {@link #TsExtractor(int, int, SubtitleParser.Factory, TimestampAdjuster,
-   *     TsPayloadReader.Factory, int)} instead.
+   *     TsPayloadReader.Factory, int, Bundle)} instead.
    */
   @Deprecated
   public TsExtractor(@DefaultTsPayloadReaderFactory.Flags int defaultTsPayloadReaderFlags) {
@@ -258,30 +276,33 @@ public final class TsExtractor implements Extractor {
         SubtitleParser.Factory.UNSUPPORTED,
         new TimestampAdjuster(0),
         new DefaultTsPayloadReaderFactory(defaultTsPayloadReaderFlags),
-        DEFAULT_TIMESTAMP_SEARCH_BYTES);
+        DEFAULT_TIMESTAMP_SEARCH_BYTES,
+        null);
   }
 
   /**
    * @deprecated Use {@link #TsExtractor(int, int, SubtitleParser.Factory, TimestampAdjuster,
-   *     TsPayloadReader.Factory, int)} instead.
+   *     TsPayloadReader.Factory, int, Bundle)} instead.
    */
   @Deprecated
   public TsExtractor(
       @Mode int mode,
       @DefaultTsPayloadReaderFactory.Flags int defaultTsPayloadReaderFlags,
-      int timestampSearchBytes) {
+      int timestampSearchBytes,
+      Bundle info) {
     this(
         mode,
         FLAG_EMIT_RAW_SUBTITLE_DATA,
         SubtitleParser.Factory.UNSUPPORTED,
         new TimestampAdjuster(0),
         new DefaultTsPayloadReaderFactory(defaultTsPayloadReaderFlags),
-        timestampSearchBytes);
+        timestampSearchBytes,
+        info);
   }
 
   /**
    * @deprecated Use {@link #TsExtractor(int, int, SubtitleParser.Factory, TimestampAdjuster,
-   *     TsPayloadReader.Factory, int)} instead.
+   *     TsPayloadReader.Factory, int, Bundle)} instead.
    */
   @Deprecated
   public TsExtractor(
@@ -294,26 +315,29 @@ public final class TsExtractor implements Extractor {
         SubtitleParser.Factory.UNSUPPORTED,
         timestampAdjuster,
         payloadReaderFactory,
-        DEFAULT_TIMESTAMP_SEARCH_BYTES);
+        DEFAULT_TIMESTAMP_SEARCH_BYTES,
+        null);
   }
 
   /**
    * @deprecated Use {@link #TsExtractor(int, int, SubtitleParser.Factory, TimestampAdjuster,
-   *     TsPayloadReader.Factory, int)} instead.
+   *     TsPayloadReader.Factory, int, Bundle)} instead.
    */
   @Deprecated
   public TsExtractor(
       @Mode int mode,
       TimestampAdjuster timestampAdjuster,
       TsPayloadReader.Factory payloadReaderFactory,
-      int timestampSearchBytes) {
+      int timestampSearchBytes,
+      Bundle info) {
     this(
         mode,
         FLAG_EMIT_RAW_SUBTITLE_DATA,
         SubtitleParser.Factory.UNSUPPORTED,
         timestampAdjuster,
         payloadReaderFactory,
-        timestampSearchBytes);
+        timestampSearchBytes,
+        info);
   }
 
   /**
@@ -341,7 +365,8 @@ public final class TsExtractor implements Extractor {
       SubtitleParser.Factory subtitleParserFactory,
       TimestampAdjuster timestampAdjuster,
       TsPayloadReader.Factory payloadReaderFactory,
-      int timestampSearchBytes) {
+      int timestampSearchBytes,
+      Bundle info) {
     this.payloadReaderFactory = Assertions.checkNotNull(payloadReaderFactory);
     this.mode = mode;
     this.packetPrefixSize = mode == MODE_M2TS ? 4 : 0;
@@ -361,10 +386,27 @@ public final class TsExtractor implements Extractor {
     trackPids = new SparseBooleanArray();
     tsPayloadReaders = new SparseArray<>();
     continuityCounters = new SparseIntArray();
-    durationReader = new TsDurationReader(timestampSearchBytes, packetSize, packetPrefixSize);
+    if (info != null) {
+      tsUri = info.getParcelable("UriToCreateExtractors");
+      if (tsUri instanceof Uri) {
+        String value = tsUri.getQueryParameter("___us___");
+        if (!TextUtils.isEmpty(value)) {
+          durationUs = Long.parseLong(value);
+        }
+      }
+    } else {
+      tsUri = null;
+    }
+    durationReader = durationUs != C.TIME_UNSET ? null
+        : new TsDurationReader(timestampSearchBytes, packetSize, packetPrefixSize);
     output = ExtractorOutput.PLACEHOLDER;
     pcrPid = -1;
     resetPayloadReaders();
+    byte[][] initDataBytes = info != null
+        ? Util.splitBytes("iniB", info.getByteArray("initDataBytes")) : null;
+    chapterTimesNs = parseChapterTimes(initDataBytes != null ? initDataBytes[1] : null);
+    pidLangs = new SparseArray<>();
+    parseBundleInfo(info, initDataBytes, pidLangs);
   }
 
   // Extractor implementation.
@@ -396,6 +438,9 @@ public final class TsExtractor implements Extractor {
         (extractorFlags & FLAG_EMIT_RAW_SUBTITLE_DATA) == 0
             ? new SubtitleTranscodingExtractorOutput(output, subtitleParserFactory)
             : output;
+    if (chapterTimesNs != null && chapterTimesNs.length > 0) {
+      this.output.chapters(chapterTimesNs, null);
+    }
   }
 
   @Override
@@ -447,6 +492,7 @@ public final class TsExtractor implements Extractor {
     boolean isModeHls = mode == MODE_HLS;
     if (tracksEnded) {
       boolean canReadDuration = inputLength != C.LENGTH_UNSET && !isModeHls;
+      canReadDuration = canReadDuration && durationReader != null;
       if (canReadDuration && !durationReader.isDurationReadFinished()) {
         return durationReader.readDuration(input, seekPosition, pcrPid);
       }
@@ -563,11 +609,18 @@ public final class TsExtractor implements Extractor {
   private void maybeOutputSeekMap(long inputLength) {
     if (!hasOutputSeekMap) {
       hasOutputSeekMap = true;
-      if (durationReader.getDurationUs() != C.TIME_UNSET) {
+      if (clipTimeMapBytes != null && clipTimeMapBytes.length > 0) {
+        output.seekMap(new BDTimeSeeker(clipTimeMapBytes, durationUs).getSeekMap());
+        return;
+      }
+      if (durationUs == C.TIME_UNSET && durationReader != null) {
+        durationUs = durationReader.getDurationUs();
+      }
+      if (durationUs != C.TIME_UNSET) {
         tsBinarySearchSeeker =
             new TsBinarySearchSeeker(
-                durationReader.getPcrTimestampAdjuster(),
-                durationReader.getDurationUs(),
+                getTimestampAdjuster(durationUs),
+                durationUs,
                 inputLength,
                 pcrPid,
                 timestampSearchBytes,
@@ -577,6 +630,22 @@ public final class TsExtractor implements Extractor {
         output.seekMap(new SeekMap.Unseekable(durationReader.getDurationUs()));
       }
     }
+  }
+
+  @NonNull
+  private TimestampAdjuster getTimestampAdjuster(long durationUs) {
+    TimestampAdjuster pcrTimestampAdjuster;
+    if (durationReader != null) {
+      pcrTimestampAdjuster = durationReader.getPcrTimestampAdjuster();
+    } else {
+      pcrTimestampAdjuster = new TimestampAdjuster(/* firstSampleTimestampUs= */ 0);
+      pcrTimestampAdjuster.adjustTsTimestamp(0);
+      if (durationUs != C.TIME_UNSET) {
+        pcrTimestampAdjuster.adjustTsTimestampGreaterThanPreviousTimestamp(
+            TimestampAdjuster.usToNonWrappedPts(durationUs));
+      }
+    }
+    return pcrTimestampAdjuster;
   }
 
   private boolean fillBufferWithAtLeastOnePacket(ExtractorInput input) throws IOException {
@@ -647,6 +716,57 @@ public final class TsExtractor implements Extractor {
     }
     tsPayloadReaders.put(TS_PAT_PID, new SectionReader(new PatReader()));
     id3Reader = null;
+  }
+
+  private void parseBundleInfo(Bundle bundle, byte[][] initDataBytes, SparseArray<String> pidLangs) {
+    if (bundle == null) {
+      return;
+    }
+    Parcelable[] clipMediaUris = bundle.getParcelableArray("clipMediaUris");
+    Serializable s = bundle.getSerializable("clipTimeMaps");
+    if (tsUri != null && s instanceof ArrayList
+        && clipMediaUris != null && clipMediaUris.length > 0) {
+      for (int i = 0; i < clipMediaUris.length; i++) {
+        if (Objects.equals(tsUri, clipMediaUris[i])) {
+          clipTimeMapBytes = ((ArrayList<byte[]>) s).get(i);
+          break;
+        }
+      }
+    }
+    if (initDataBytes == null) {
+      return;
+    }
+    byte[] audioBytes = initDataBytes[0];
+    byte[] subtitleBytes = initDataBytes[2];
+    if (audioBytes != null) {
+      int count = audioBytes.length / 6;
+      ParsableByteArray ba = new ParsableByteArray(audioBytes);
+      for (int i = 0; i < count; i++) {
+        String lang = ba.readString(3);
+        pidLangs.put(ba.readShort(), lang);
+        ba.skipBytes(1);
+      }
+    }
+    if (subtitleBytes != null) {
+      int count = subtitleBytes.length / 5;
+      ParsableByteArray ba = new ParsableByteArray(subtitleBytes);
+      for (int i = 0; i < count; i++) {
+        String lang = ba.readString(3);
+        pidLangs.put(ba.readShort(), lang);
+      }
+    }
+  }
+
+  private long[] parseChapterTimes(byte[] chapterBytes) {
+    if (chapterBytes == null || chapterBytes.length == 0 || chapterBytes.length % 8 != 0) {
+      return null;
+    }
+    long[] times = new long[chapterBytes.length / 8];
+    ParsableByteArray ba = new ParsableByteArray(chapterBytes);
+    for (int i = 0; i < times.length; i++) {
+      times[i] = ba.readLong();
+    }
+    return times;
   }
 
   /** Parses Program Association Table data. */
@@ -790,7 +910,8 @@ public final class TsExtractor implements Extractor {
         // appears intermittently during playback. See [Internal: b/20261500].
         EsInfo id3EsInfo =
             new EsInfo(TS_STREAM_TYPE_ID3, null, AUDIO_TYPE_UNDEFINED, null, Util.EMPTY_BYTE_ARRAY);
-        id3Reader = payloadReaderFactory.createPayloadReader(TS_STREAM_TYPE_ID3, id3EsInfo, -1);
+        id3Reader = payloadReaderFactory.createPayloadReader(
+            TS_STREAM_TYPE_ID3, id3EsInfo, TsExtractor.MODE_UNKNOWN, null);
         if (id3Reader != null) {
           id3Reader.init(
               timestampAdjuster,
@@ -824,7 +945,8 @@ public final class TsExtractor implements Extractor {
         TsPayloadReader reader =
             mode == MODE_HLS && streamType == TS_STREAM_TYPE_ID3
                 ? id3Reader
-                : payloadReaderFactory.createPayloadReader(streamType, esInfo, mode);
+                : payloadReaderFactory.createPayloadReader(
+                    streamType, esInfo, mode, pidLangs.get(elementaryPid, esInfo.language));
         if (reader == null) {
           android.util.Log.i(this.getClass().getSimpleName(), "---===streamType not handled: " + streamType);
         }

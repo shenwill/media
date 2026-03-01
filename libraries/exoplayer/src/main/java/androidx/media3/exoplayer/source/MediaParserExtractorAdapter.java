@@ -23,6 +23,7 @@ import android.annotation.SuppressLint;
 import android.media.MediaParser;
 import android.media.MediaParser.SeekPoint;
 import android.net.Uri;
+import android.os.Bundle;
 import android.util.Pair;
 import androidx.annotation.RequiresApi;
 import androidx.media3.common.C;
@@ -52,7 +53,7 @@ public final class MediaParserExtractorAdapter implements ProgressiveMediaExtrac
    */
   @Deprecated
   public static final ProgressiveMediaExtractor.Factory FACTORY =
-      playerId -> new MediaParserExtractorAdapter(playerId, ImmutableMap.of());
+      (playerId, info) -> new MediaParserExtractorAdapter(playerId, ImmutableMap.of());
 
   /**
    * A {@link ProgressiveMediaExtractor.Factory} for instances of {@link
@@ -76,7 +77,8 @@ public final class MediaParserExtractorAdapter implements ProgressiveMediaExtrac
     }
 
     @Override
-    public MediaParserExtractorAdapter createProgressiveMediaExtractor(PlayerId playerId) {
+    public MediaParserExtractorAdapter createProgressiveMediaExtractor(
+        PlayerId playerId, Bundle info) {
       return new MediaParserExtractorAdapter(playerId, parameters);
     }
   }

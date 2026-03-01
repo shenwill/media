@@ -17,7 +17,9 @@ package androidx.media3.extractor.ts;
 
 import static java.lang.annotation.ElementType.TYPE_USE;
 
+import android.text.TextUtils;
 import android.util.SparseArray;
+
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import androidx.media3.common.Format;
@@ -26,7 +28,9 @@ import androidx.media3.common.util.CodecSpecificDataUtil;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.extractor.ts.TsPayloadReader.EsInfo;
+
 import com.google.common.collect.ImmutableList;
+
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -147,26 +151,28 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
 
   @Override
   @Nullable
-  public TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo, int mode) {
+  public TsPayloadReader createPayloadReader(
+      int streamType, EsInfo esInfo, int mode, String language) {
+    String lang = TextUtils.isEmpty(language) ? esInfo.language : language;
     switch (streamType) {
       case TsExtractor.TS_STREAM_TYPE_MPA:
       case TsExtractor.TS_STREAM_TYPE_MPA_LSF:
-        return new PesReader(new MpegAudioReader(esInfo.language));
+        return new PesReader(new MpegAudioReader(lang));
       case TsExtractor.TS_STREAM_TYPE_AAC_ADTS:
         return isSet(FLAG_IGNORE_AAC_STREAM)
             ? null
-            : new PesReader(new AdtsReader(false, esInfo.language));
+            : new PesReader(new AdtsReader(false, lang));
       case TsExtractor.TS_STREAM_TYPE_AAC_LATM:
         return isSet(FLAG_IGNORE_AAC_STREAM)
             ? null
-            : new PesReader(new LatmReader(esInfo.language));
+            : new PesReader(new LatmReader(lang));
       case TsExtractor.TS_STREAM_TYPE_AC3:
       case TsExtractor.TS_STREAM_TYPE_E_AC3:
-        return new PesReader(new Ac3Reader(esInfo.language));
+        return new PesReader(new Ac3Reader(lang));
       case TsExtractor.TS_STREAM_TYPE_TRUEHD:
-        return new PesReader(new MlpReader(esInfo.language));
+        return new PesReader(new MlpReader(lang));
       case TsExtractor.TS_STREAM_TYPE_AC4:
-        return new PesReader(new Ac4Reader(esInfo.language));
+        return new PesReader(new Ac4Reader(lang));
       case TsExtractor.TS_STREAM_TYPE_HDMV_DTS:
         if (!isSet(FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)) {
           return null;
@@ -178,7 +184,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         return new PesReader(
             new DtsReader(
                 streamType,
-                esInfo.language,
+                lang,
                 esInfo.getRoleFlags(),
                 DtsReader.EXTSS_HEADER_SIZE_MAX,
                 MimeTypes.VIDEO_MP2T));
@@ -186,7 +192,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         return new PesReader(
             new DtsReader(
                 streamType,
-                esInfo.language,
+                lang,
                 esInfo.getRoleFlags(),
                 DtsReader.FTOC_MAX_HEADER_SIZE,
                 MimeTypes.VIDEO_MP2T));
@@ -194,8 +200,8 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
       case TsExtractor.TS_STREAM_TYPE_DC2_H262_OR_BLU_RAY_PCM_AUDIO:
         return streamType == TsExtractor.TS_STREAM_TYPE_DC2_H262_OR_BLU_RAY_PCM_AUDIO
             && mode == TsExtractor.MODE_M2TS
-            ? new PesReader(new LpcmReader(esInfo.language))
-            : new PesReader(new H262Reader(buildUserDataReader(esInfo)));
+            ? new PesReader(new LpcmReader(lang, true))
+            : new PesReader(new H262Reader(buildUserDataReader(esInfo), null, false));
       case TsExtractor.TS_STREAM_TYPE_H263:
         return new PesReader(new H263Reader(buildUserDataReader(esInfo)));
       case TsExtractor.TS_STREAM_TYPE_H264:
@@ -213,7 +219,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
           return new PesReader(
               new DtsReader(
                   streamType,
-                  esInfo.language,
+                  lang,
                   esInfo.getRoleFlags(),
                   DtsReader.FTOC_MAX_HEADER_SIZE,
                   MimeTypes.VIDEO_MP2T));
@@ -228,7 +234,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
       case TsExtractor.TS_STREAM_TYPE_AIT:
         return new SectionReader(new PassthroughSectionPayloadReader(MimeTypes.APPLICATION_AIT));
       case TsExtractor.TS_STREAM_TYPE_SUBTITLE_PGS:
-        return new PesReader(new PgsReader(esInfo.language, false));
+        return new PesReader(new PgsReader(lang, false));
       default:
         return null;
     }
