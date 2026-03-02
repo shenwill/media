@@ -1787,6 +1787,7 @@ public final class MediaItem implements Bundleable {
     private static final String FIELD_ROLE_FLAGS = Util.intToStringMaxRadix(4);
     private static final String FIELD_LABEL = Util.intToStringMaxRadix(5);
     private static final String FIELD_ID = Util.intToStringMaxRadix(6);
+    private static final String FIELD_INIT_DATA = Util.intToStringMaxRadix(7);
 
     /**
      * An object that can restore {@link SubtitleConfiguration} from a {@link Bundle}.
@@ -1808,6 +1809,14 @@ public final class MediaItem implements Bundleable {
       @C.RoleFlags int roleFlags = bundle.getInt(FIELD_ROLE_FLAGS, 0);
       @Nullable String label = bundle.getString(FIELD_LABEL);
       @Nullable String id = bundle.getString(FIELD_ID);
+      List<byte[]> initializationData = new ArrayList<>();
+      for (int i = 0; ; i++) {
+        @Nullable byte[] data = bundle.getByteArray(keyForIndexing(FIELD_INIT_DATA, i));
+        if (data == null) {
+          break;
+        }
+        initializationData.add(data);
+      }
 
       SubtitleConfiguration.Builder builder = new SubtitleConfiguration.Builder(uri);
       return builder
@@ -1817,7 +1826,14 @@ public final class MediaItem implements Bundleable {
           .setRoleFlags(roleFlags)
           .setLabel(label)
           .setId(id)
+          .setInitializationData(initializationData)
           .build();
+    }
+
+    private static String keyForIndexing(String key, int index) {
+      return key
+          + "_"
+          + Integer.toString(index, Character.MAX_RADIX);
     }
 
     @UnstableApi
@@ -1842,6 +1858,11 @@ public final class MediaItem implements Bundleable {
       }
       if (id != null) {
         bundle.putString(FIELD_ID, id);
+      }
+      if (initializationData != null) {
+        for (int i = 0; i < initializationData.size(); i++) {
+          bundle.putByteArray(keyForIndexing(FIELD_INIT_DATA, i), initializationData.get(i));
+        }
       }
       return bundle;
     }

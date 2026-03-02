@@ -426,27 +426,23 @@ public final class VobsubParser implements SubtitleParser {
         return;
       }
       int[] palette = this.palette;
-      buffer.skipBytes(buffer.readUnsignedShort() - 4);
-      int lastEnd = 0;
-      boolean lastEndHit = false;
-      while (!lastEndHit && buffer.bytesLeft() > 4) {
+      int basePosition = buffer.getPosition() - 2;
+      int controlPosition = buffer.readUnsignedShort();
+      int nextControlPosition = 0;
+      while (buffer.bytesLeft() > 4) {
+        buffer.setPosition(basePosition + controlPosition);
         int delayExecute = buffer.readUnsignedShort();
-        int end = buffer.readUnsignedShort();
-        if (end < lastEnd) {
+        nextControlPosition = buffer.readUnsignedShort();
+        parseControl(palette, buffer, delayExecute);
+        if (nextControlPosition <= controlPosition) {
           break;
         }
-        lastEndHit = end == lastEnd;
-        if (lastEndHit) {
-          end = buffer.limit();
-        } else {
-          lastEnd = end;
-        }
-        parseControl(palette, buffer, end, delayExecute);
+        controlPosition = nextControlPosition;
       }
     }
 
-    private void parseControl(int[] palette, ParsableByteArray buffer, int end, int delayExecute) {
-      while (buffer.getPosition() < end && buffer.bytesLeft() > 0) {
+    private void parseControl(int[] palette, ParsableByteArray buffer, int delayExecute) {
+      while (buffer.bytesLeft() > 0) {
         switch (buffer.readUnsignedByte()) {
           case CMD_COLORS:
             if (!parseControlColors(palette, buffer)) {
