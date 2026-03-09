@@ -2273,10 +2273,14 @@ public final class Util {
       case C.ENCODING_PCM_8BIT:
         return 8;
       case C.ENCODING_PCM_16BIT:
+      case C.ENCODING_PCM_16BIT_BIG_ENDIAN:
         return 16;
       case C.ENCODING_PCM_24BIT:
+      case C.ENCODING_PCM_24BIT_BIG_ENDIAN:
         return 24;
       case C.ENCODING_PCM_32BIT:
+      case C.ENCODING_PCM_32BIT_BIG_ENDIAN:
+      case C.ENCODING_PCM_FLOAT:
         return 32;
       default:
         return -1;
