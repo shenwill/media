@@ -1932,7 +1932,7 @@ public class PlayerControlView extends FrameLayout {
               playbackCodecAdapter.updateSelectedIndex(position);
               if (codecSelectionListener != null) {
                 codecSelectionListener.onCodecSelect(
-                    playbackCodecAdapter.selectedIndex == 0 ? null : "alt");
+                    playbackCodecAdapter.selectedIndex == 0 ? null : "ext");
               }
             }
             settingsWindow.dismiss();

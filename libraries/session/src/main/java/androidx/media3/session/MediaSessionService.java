@@ -531,6 +531,16 @@ public abstract class MediaSessionService extends Service {
     }
   }
 
+  protected void setMediaNotificationManager(
+      MediaNotificationManager manager, MediaNotification.Provider provider) {
+    checkNotNull(manager);
+    checkNotNull(provider);
+    synchronized (lock) {
+      mediaNotificationManager = manager;
+      mediaNotificationProvider = provider;
+    }
+  }
+
   /**
    * Sets the {@link MediaNotification.Provider} to customize notifications.
    *
@@ -590,7 +600,7 @@ public abstract class MediaSessionService extends Service {
     }
   }
 
-  private DefaultActionFactory getActionFactory() {
+  protected DefaultActionFactory getActionFactory() {
     synchronized (lock) {
       if (actionFactory == null) {
         actionFactory = new DefaultActionFactory(/* service= */ this);

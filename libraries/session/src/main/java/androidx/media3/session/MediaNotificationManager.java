@@ -53,14 +53,14 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>All methods must be called on the main thread.
  */
-/* package */ final class MediaNotificationManager {
+/* package */ public class MediaNotificationManager {
 
   private static final String TAG = "MediaNtfMng";
 
   private final MediaSessionService mediaSessionService;
-  private final MediaNotification.Provider mediaNotificationProvider;
+  protected final MediaNotification.Provider mediaNotificationProvider;
   private final MediaNotification.ActionFactory actionFactory;
-  private final NotificationManagerCompat notificationManagerCompat;
+  protected final NotificationManagerCompat notificationManagerCompat;
   private final Executor mainExecutor;
   private final Intent startSelfIntent;
   private final Map<MediaSession, ListenableFuture<MediaController>> controllerMap;
@@ -250,7 +250,7 @@ import java.util.concurrent.TimeoutException;
     }
   }
 
-  private boolean shouldShowNotification(MediaSession session) {
+  protected boolean shouldShowNotification(MediaSession session) {
     MediaController controller = getConnectedControllerForSession(session);
     return controller != null
         && !controller.getCurrentTimeline().isEmpty()
@@ -258,7 +258,7 @@ import java.util.concurrent.TimeoutException;
   }
 
   @Nullable
-  private MediaController getConnectedControllerForSession(MediaSession session) {
+  protected MediaController getConnectedControllerForSession(MediaSession session) {
     ListenableFuture<MediaController> controller = controllerMap.get(session);
     if (controller == null || !controller.isDone()) {
       return null;
