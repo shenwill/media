@@ -275,7 +275,7 @@ public class DefaultRenderersFactory implements RenderersFactory {
     ArrayList<Renderer> renderersList = new ArrayList<>();
     buildVideoRenderers(
         context,
-        extensionRendererMode,
+        EXTENSION_RENDERER_MODE_ON,
         mediaCodecSelector,
         enableDecoderFallback,
         eventHandler,

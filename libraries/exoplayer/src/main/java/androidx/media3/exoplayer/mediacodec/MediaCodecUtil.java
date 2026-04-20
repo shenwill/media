@@ -30,6 +30,7 @@ import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 import androidx.media3.common.C;
 import androidx.media3.common.ColorInfo;
+import androidx.media3.common.DeviceInfo;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Log;
@@ -40,6 +41,7 @@ import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -690,6 +692,35 @@ public final class MediaCodecUtil {
       // ref: b/199124812].
       if ("OMX.qti.audio.decoder.flac".equals(firstCodecName)) {
         decoderInfos.add(decoderInfos.remove(0));
+      }
+    }
+
+    // "OMX.MTK.VIDEO.DECODER.MPEG4", works now on Redmi Note 8 Pro & m1 Note hardwareAccelerated
+    // "OMX.qti.video.decoder.mpeg4sw", works now on S10 A57 hardwareAccelerated
+    // "OMX.google.mpeg4.decoder", found on OPPO A57 but NoSupport
+    // "OMX.SEC.mpeg4.sw.dec",
+    // "c2.sec.mpeg4.decoder", works now on Galaxy S25 softwareOnly, test pass on S10
+    // "c2.android.flac.decoder" works now on Redmi Note 12 Turbo softwareOnly
+    if (!decoderInfos.isEmpty()) {
+      List<String> namesToRemove = List.of(
+          // works terrible on Redmi Note 12 Turbo softwareOnly
+          "c2.android.mpeg4.decoder",
+          // not work on m1 note
+          "OMX.MTK.AUDIO.DECODER.FLAC",
+          // report errors on m1 note
+          "OMX.ffmpeg.flac.decoder",
+          ""
+      );
+      Iterator<MediaCodecInfo> iterator = decoderInfos.iterator();
+      while (iterator.hasNext()) {
+        MediaCodecInfo mediaCodecInfo = iterator.next();
+        Log.i(TAG, "codec name=" + mediaCodecInfo.name
+            + " mimeType=" + mediaCodecInfo.mimeType
+            + " hardwareAccelerated=" + mediaCodecInfo.hardwareAccelerated
+            + " softwareOnly=" + mediaCodecInfo.softwareOnly);
+        if (namesToRemove.contains(mediaCodecInfo.name)) {
+          iterator.remove();
+        }
       }
     }
   }
