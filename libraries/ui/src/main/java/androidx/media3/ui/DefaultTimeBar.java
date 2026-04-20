@@ -979,9 +979,10 @@ public class DefaultTimeBar extends View implements TimeBar {
   }
 
   private long getPositionIncrement() {
-    return keyTimeIncrement == C.TIME_UNSET
+    long ms = keyTimeIncrement == C.TIME_UNSET
         ? (duration == C.TIME_UNSET ? 0 : (duration / keyCountIncrement))
         : keyTimeIncrement;
+    return Math.min(ms, 30_000);
   }
 
   private boolean setDrawableLayoutDirection(Drawable drawable) {
