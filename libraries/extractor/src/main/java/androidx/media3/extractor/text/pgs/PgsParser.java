@@ -67,7 +67,6 @@ public final class PgsParser implements SubtitleParser {
   private final ParsableByteArray buffer;
   private final ParsableByteArray inflatedBuffer;
   private final CueBuilder cueBuilder;
-  @Nullable private Inflater inflater;
 
   public PgsParser() {
     buffer = new ParsableByteArray();
@@ -114,12 +113,11 @@ public final class PgsParser implements SubtitleParser {
 
   private void maybeInflateData(ParsableByteArray buffer) {
     if (buffer.bytesLeft() > 0 && buffer.peekUnsignedByte() == INFLATE_HEADER) {
-      if (inflater == null) {
-        inflater = new Inflater();
-      }
+      Inflater inflater = new Inflater();
       if (Util.inflate(buffer, inflatedBuffer, inflater)) {
         buffer.reset(inflatedBuffer.getData(), inflatedBuffer.limit());
       } // else assume data is not compressed.
+      inflater.end();
     }
   }
 
