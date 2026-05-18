@@ -132,6 +132,9 @@ public final class VobsubParser implements SubtitleParser {
   }
 
   private void parseSubFile(Consumer<CuesWithTiming> output) {
+    if (inflater == null) {
+      inflater = new Inflater();
+    }
     if (Util.maybeInflate(scratch, inflatedScratch, inflater)) {
       scratch.reset(inflatedScratch.getData(), inflatedScratch.limit());
     }
@@ -750,6 +753,13 @@ public final class VobsubParser implements SubtitleParser {
           .setSize((float) boundingBox.width() / planeWidth)
           .setBitmapHeight((float) boundingBox.height() / planeHeight)
           .build();
+    }
+  }
+
+  public void release() {
+    if (inflater != null) {
+      inflater.end();
+      inflater = null;
     }
   }
 

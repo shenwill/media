@@ -18,6 +18,7 @@ package androidx.media3.exoplayer.text;
 import androidx.media3.extractor.text.SimpleSubtitleDecoder;
 import androidx.media3.extractor.text.Subtitle;
 import androidx.media3.extractor.text.SubtitleParser;
+import androidx.media3.extractor.text.vobsub.VobsubParser;
 
 /**
  * Wrapper around a {@link SubtitleParser} that can be used instead of any current {@link
@@ -58,5 +59,13 @@ import androidx.media3.extractor.text.SubtitleParser;
       subtitleParser.reset();
     }
     return subtitleParser.parseToLegacySubtitle(data, /* offset= */ 0, length);
+  }
+
+  @Override
+  public void release() {
+    super.release();
+    if (subtitleParser instanceof VobsubParser) {
+      ((VobsubParser) subtitleParser).release();
+    }
   }
 }
