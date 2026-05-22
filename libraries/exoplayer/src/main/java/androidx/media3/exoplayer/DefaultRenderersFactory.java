@@ -63,12 +63,14 @@ public class DefaultRenderersFactory implements RenderersFactory {
 
   /**
    * Modes for using extension renderers. One of {@link #EXTENSION_RENDERER_MODE_OFF}, {@link
-   * #EXTENSION_RENDERER_MODE_ON} or {@link #EXTENSION_RENDERER_MODE_PREFER}.
+   * #EXTENSION_RENDERER_MODE_ON} or {@link #EXTENSION_RENDERER_MODE_PREFER_AUDIO} or {@link #EXTENSION_RENDERER_MODE_PREFER_VIDEO}.
    */
   @Documented
   @Retention(RetentionPolicy.SOURCE)
   @Target(TYPE_USE)
-  @IntDef({EXTENSION_RENDERER_MODE_OFF, EXTENSION_RENDERER_MODE_ON, EXTENSION_RENDERER_MODE_PREFER})
+  @IntDef(
+    flag = true,
+    value = {EXTENSION_RENDERER_MODE_OFF, EXTENSION_RENDERER_MODE_ON, EXTENSION_RENDERER_MODE_PREFER_AUDIO, EXTENSION_RENDERER_MODE_PREFER_VIDEO})
   public @interface ExtensionRendererMode {}
 
   /** Do not allow use of extension renderers. */
@@ -88,7 +90,18 @@ public class DefaultRenderersFactory implements RenderersFactory {
    * prefer to use an extension renderer to a core renderer in the case that both are able to play a
    * given track.
    */
-  public static final int EXTENSION_RENDERER_MODE_PREFER = 2;
+  public static final int EXTENSION_RENDERER_MODE_PREFER_AUDIO = 2;
+  public static final int EXTENSION_RENDERER_MODE_PREFER_VIDEO = 4;
+
+  @UnstableApi
+  public static @ExtensionRendererMode int getExtensionDecodersMode(
+    boolean preferExtensionDecodersAudio, boolean preferExtensionDecodersVideo) {
+    return DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+      | (preferExtensionDecodersAudio ?
+      DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER_AUDIO : 0)
+      | (preferExtensionDecodersVideo ?
+      DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER_VIDEO : 0);
+  }
 
   /**
    * The maximum number of frames that can be dropped between invocations of {@link
@@ -275,7 +288,7 @@ public class DefaultRenderersFactory implements RenderersFactory {
     ArrayList<Renderer> renderersList = new ArrayList<>();
     buildVideoRenderers(
         context,
-        EXTENSION_RENDERER_MODE_ON,
+        extensionRendererMode,
         mediaCodecSelector,
         enableDecoderFallback,
         eventHandler,
@@ -354,7 +367,7 @@ public class DefaultRenderersFactory implements RenderersFactory {
       return;
     }
     int extensionRendererIndex = out.size();
-    if (extensionRendererMode == EXTENSION_RENDERER_MODE_PREFER) {
+    if ((extensionRendererMode & EXTENSION_RENDERER_MODE_PREFER_VIDEO) != 0) {
       extensionRendererIndex--;
     }
 
@@ -473,7 +486,7 @@ public class DefaultRenderersFactory implements RenderersFactory {
       return;
     }
     int extensionRendererIndex = out.size();
-    if (extensionRendererMode == EXTENSION_RENDERER_MODE_PREFER) {
+    if ((extensionRendererMode & EXTENSION_RENDERER_MODE_PREFER_AUDIO) != 0) {
       extensionRendererIndex--;
     }
 

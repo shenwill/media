@@ -566,7 +566,7 @@ public class PlayerControlView extends FrameLayout {
     settingIcons[SETTINGS_AUDIO_TRACK_SELECTION_POSITION] =
         getDrawable(context, resources, R.drawable.exo_styled_controls_audiotrack);
     settingTexts[SETTINGS_PLAYBACK_CODEC_POSITION] =
-        resources.getString(R.string.exo_controls_playback_codec);
+        resources.getString(R.string.exo_controls_play_description);
     settingIcons[SETTINGS_PLAYBACK_CODEC_POSITION] =
         getDrawable(context, resources, R.drawable.exo_styled_controls_codec);
     settingsAdapter = new SettingsAdapter(settingTexts, settingIcons);
@@ -758,8 +758,9 @@ public class PlayerControlView extends FrameLayout {
     codecSelectionListener = listener;
   }
 
-  public void updateCodecSelection(String codecHint) {
-    playbackCodecAdapter.updateSelectedIndex(TextUtils.isEmpty(codecHint) ? 0 : 1);
+  public void updateCodecSelection(boolean preferAudio, boolean preferVideo) {
+    playbackCodecAdapter.updateSelectedIndex(
+      preferAudio && preferVideo ? 3 : preferAudio ? 1 : preferVideo ? 2 : 0);
   }
 
   /**
@@ -1931,8 +1932,7 @@ public class PlayerControlView extends FrameLayout {
             if (position != selectedIndex) {
               playbackCodecAdapter.updateSelectedIndex(position);
               if (codecSelectionListener != null) {
-                codecSelectionListener.onCodecSelect(
-                    playbackCodecAdapter.selectedIndex == 0 ? null : "ext");
+                codecSelectionListener.onCodecSelect(String.valueOf(selectedIndex));
               }
             }
             settingsWindow.dismiss();
