@@ -15,6 +15,7 @@
  */
 package androidx.media3.extractor;
 
+import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.util.UnstableApi;
 
@@ -75,5 +76,5 @@ public interface ExtractorOutput {
    */
   void seekMap(SeekMap seekMap);
 
-  void chapters(long[] startTimes, String[] titles);
+  void chapters(long[] startTimes, @Nullable String[] titles);
 }

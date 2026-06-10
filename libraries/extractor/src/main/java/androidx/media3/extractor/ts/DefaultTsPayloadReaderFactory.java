@@ -201,7 +201,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         return streamType == TsExtractor.TS_STREAM_TYPE_DC2_H262_OR_BLU_RAY_PCM_AUDIO
             && mode == TsExtractor.MODE_M2TS
             ? new PesReader(new LpcmReader(lang, true))
-            : new PesReader(new H262Reader(buildUserDataReader(esInfo), null, false));
+            : new PesReader(new H262Reader(buildUserDataReader(esInfo), null));
       case TsExtractor.TS_STREAM_TYPE_H263:
         return new PesReader(new H263Reader(buildUserDataReader(esInfo)));
       case TsExtractor.TS_STREAM_TYPE_H264:

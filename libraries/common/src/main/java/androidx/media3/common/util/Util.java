@@ -2101,6 +2101,30 @@ public final class Util {
     return result.toString();
   }
 
+  @UnstableApi
+  public static String toHexString(long[] array) {
+    StringBuilder result = new StringBuilder(array.length * 2);
+    for (int i = 0; i < array.length; i++) {
+      result.append(String.format("%016x", array[i]))
+          .append(i % 8 == 7 ? '\n' : ' ');
+    }
+    return result.toString();
+  }
+
+  public static String toHexString(ParsableByteArray parsableByteArray, int length) {
+    StringBuilder result = new StringBuilder(length * 3);
+    byte[] bytes = parsableByteArray.getData();
+    int position = parsableByteArray.getPosition();
+    for (int i = 0; i < length; i++) {
+      byte b = bytes[position + i];
+      result
+          .append(Character.forDigit((b >> 4) & 0xF, 16))
+          .append(Character.forDigit(b & 0xF, 16))
+          .append(i % 64 == 63 ? '\n' : ' ');
+    }
+    return result.toString();
+  }
+
   /**
    * Returns a string with comma delimited simple names of each object's class.
    *
@@ -2831,6 +2855,10 @@ public final class Util {
     return timeString(timeMs, true);
   }
 
+  public static String timeStringUs(long timeUs) {
+    return timeUs == C.TIME_UNSET ? "?" : timeString(timeUs / 1000, true);
+  }
+
   public static String timeString(long timeMs, boolean ms) {
     return (timeMs < 0 ? "-" : "")
         + getStringForTime(formatBuilder, formatter, timeMs < 0 ? -timeMs : timeMs, ms);
@@ -3005,7 +3033,7 @@ public final class Util {
     return buffer.array();
   }
 
-  public static byte[][] splitBytes(String fourccExpected, byte[] bytes) {
+  public static byte[][] splitBytes(String fourccExpected, @Nullable byte[] bytes) {
     if (bytes == null || bytes.length < 9 || bytes[0] != 0x56) {
       return null;
     }

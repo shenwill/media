@@ -15,14 +15,15 @@
  */
 package androidx.media3.extractor.ts;
 
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseLongArray;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
@@ -50,6 +51,7 @@ import java.io.IOException;
 import java.util.List;
 
 /** Extracts data from the MPEG-2 PS container format. */
+@RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR2)
 @UnstableApi
 public final class PsExtractor implements Extractor {
 
@@ -82,23 +84,27 @@ public final class PsExtractor implements Extractor {
   private final TimestampAdjuster timestampAdjuster;
   private final SparseArray<PesReader> psPayloadReaders; // Indexed by pid
   private final ParsableByteArray psPacketBuffer;
-  private final PsDurationReader durationReader;
+  @Nullable private final PsDurationReader durationReader;
   private final long durationUs;
-  private final byte[][] initDataBytes;
-  private final byte[] timeMapTableBytes;
-  private ElementaryStreamReaderStub elementaryStreamReaderStub;
+  @Nullable private final byte[][] initDataBytes;
+  @Nullable private final byte[] timeMapTableBytes;
+  @Nullable private ElementaryStreamReaderStub elementaryStreamReaderStub;
   private final PrivateStream2Reader privateStream2Reader;
-  private final SparseLongArray cellsWithStartTimes;
+  @Nullable private final SparseLongArray cellsWithStartTimes;
   private boolean skipInterleavedVobU;
   private long timeUsFromVobU = C.TIME_UNSET;
+  private long videoStartUs = C.TIME_UNSET;
   final private SparseBooleanArray timeOffsetNeedsUpdateArray = new SparseBooleanArray();
   final private SparseLongArray timeOffsetUsBetweenVobUAndPesArray = new SparseLongArray();
-  private final byte[] videoAttrBytes;
-  private long lastOffset = C.TIME_UNSET;
+  @Nullable private final byte[] videoAttrBytes;
   private boolean foundAllTracks;
   private boolean foundAudioTrack;
   private boolean foundVideoTrack;
   private long lastTrackPosition;
+
+  // for dvd subtitle tracks
+  private long globalFirstVobUTimeUs = C.TIME_UNSET;
+  private boolean subtitleTimeMustAlignWithNavPack;
 
   // Accessed only by the loading thread.
   @Nullable private PsBinarySearchSeeker psBinarySearchSeeker;
@@ -109,11 +115,11 @@ public final class PsExtractor implements Extractor {
     this(null);
   }
 
-  public PsExtractor(Bundle info) {
+  public PsExtractor(@Nullable Bundle info) {
     this(new TimestampAdjuster(0), info);
   }
 
-  public PsExtractor(TimestampAdjuster timestampAdjuster, Bundle info) {
+  public PsExtractor(TimestampAdjuster timestampAdjuster, @Nullable Bundle info) {
     this.timestampAdjuster = timestampAdjuster;
     psPacketBuffer = new ParsableByteArray(4096);
     psPayloadReaders = new SparseArray<>();
@@ -208,6 +214,7 @@ public final class PsExtractor implements Extractor {
       psPayloadReaders.valueAt(i).seek();
     }
     skipInterleavedVobU = false;
+    privateStream2Reader.onSeek();
   }
 
   @Override
@@ -287,7 +294,6 @@ public final class PsExtractor implements Extractor {
           // Private stream, used for AC3 audio.
           // NOTE: This may need further parsing to determine if its DTS, but that's likely only
           // valid for DVDs.
-//          foundAudioTrack = true;
           elementaryStreamReaderStub = new ElementaryStreamReaderStub(initDataBytes);
           elementaryStreamReader = elementaryStreamReaderStub;
           lastTrackPosition = input.getPosition();
@@ -309,11 +315,11 @@ public final class PsExtractor implements Extractor {
                       .build()
               ))
               : null;
-          elementaryStreamReader = new H262Reader(userDataReader, initDataBytes, true);
+          elementaryStreamReader = new H262Reader(userDataReader, initDataBytes);
           foundVideoTrack = true;
           lastTrackPosition = input.getPosition();
         } else if (streamId != PADDING_STREAM) {
-          android.util.Log.i(TAG, "---===streamId not handled: 0x" + Integer.toHexString(streamId));
+          Log.i(TAG, "---===streamId not handled: 0x" + Integer.toHexString(streamId));
         }
         if (elementaryStreamReader != null) {
           TrackIdGenerator idGenerator = new TrackIdGenerator(streamId, MAX_STREAM_ID_PLUS_ONE);
@@ -330,7 +336,7 @@ public final class PsExtractor implements Extractor {
         foundAllTracks = true;
         if (elementaryStreamReaderStub != null) {
           PesReader privatePayloadReader = psPayloadReaders.get(PRIVATE_STREAM_1);
-          if (privatePayloadReader != null) {
+          if (privatePayloadReader != null && privatePayloadReader.pesPayloadReaders != null) {
             elementaryStreamReaderStub.endTracks(privatePayloadReader.pesPayloadReaders);
           }
         }
@@ -359,8 +365,14 @@ public final class PsExtractor implements Extractor {
     return RESULT_CONTINUE;
   }
 
-  public void setTimeUsFromVobU(long timeUsFromVobU) {
+  public void setTimeUsFromVobU(long timeUsFromVobU, long videoStartUs) {
+    if (globalFirstVobUTimeUs == C.TIME_UNSET) {
+      globalFirstVobUTimeUs = timeUsFromVobU;
+    }
     this.timeUsFromVobU = timeUsFromVobU;
+    if (this.videoStartUs == C.TIME_UNSET) {
+      this.videoStartUs = videoStartUs;
+    }
     updateValueInSparseBooleanArray(true, timeOffsetNeedsUpdateArray);
   }
 
@@ -371,13 +383,16 @@ public final class PsExtractor implements Extractor {
   }
 
   public void unsetTimeUsFromVobU() {
+    // Interleaved VobU encounters, PES time can not be used anymore
+    subtitleTimeMustAlignWithNavPack = true;
     this.timeUsFromVobU = C.TIME_UNSET;
     updateValueInSparseBooleanArray(false, timeOffsetNeedsUpdateArray);
   }
 
   // Internals.
 
-  private SparseLongArray getCellsWithStartTimes(byte[][] initDataBytes) {
+  @Nullable
+  private SparseLongArray getCellsWithStartTimes(@Nullable byte[][] initDataBytes) {
     byte[] bytes = initDataBytes != null ? initDataBytes[8] : null;
     if (bytes == null) {
       return null;
@@ -393,7 +408,7 @@ public final class PsExtractor implements Extractor {
     return cells;
   }
 
-  private long getDurationUsFromInfo(byte[][] initDataBytes) {
+  private long getDurationUsFromInfo(@Nullable byte[][] initDataBytes) {
     byte[] bytes = initDataBytes != null ? initDataBytes[6] : null;
     if (bytes == null || bytes.length < 4) {
       return C.TIME_UNSET;
@@ -401,7 +416,8 @@ public final class PsExtractor implements Extractor {
     return TsUtil.dvdTimeToUs(Ints.fromBytes(bytes[0], bytes[1], bytes[2], bytes[3]));
   }
 
-  private byte[] getTimeMapTableBytes(byte[][] initDataBytes) {
+  @Nullable
+  private byte[] getTimeMapTableBytes(@Nullable byte[][] initDataBytes) {
     byte[] bytes = initDataBytes != null ? initDataBytes[9] : null;
     if (bytes == null || bytes.length < 11) {
       return null;
@@ -432,7 +448,6 @@ public final class PsExtractor implements Extractor {
     }
   }
 
-  @NonNull
   private TimestampAdjuster getTimestampAdjuster(long durationUs) {
     TimestampAdjuster scrTimestampAdjuster;
     if (durationReader != null) {
@@ -453,7 +468,7 @@ public final class PsExtractor implements Extractor {
 
     private static final int PES_SCRATCH_SIZE = 64;
 
-    private final SparseArray<ElementaryStreamReader> pesPayloadReaders;
+    @Nullable private final SparseArray<ElementaryStreamReader> pesPayloadReaders;
     private final ElementaryStreamReader pesPayloadReader;
     private final TimestampAdjuster timestampAdjuster;
     private final ParsableBitArray pesScratch;
@@ -463,7 +478,6 @@ public final class PsExtractor implements Extractor {
     private boolean dtsFlag;
     private boolean seenFirstDts;
     private int extendedHeaderLength;
-    private long timeUs;
 
     public PesReader(
         ElementaryStreamReader pesPayloadReader,
@@ -486,6 +500,9 @@ public final class PsExtractor implements Extractor {
      */
     public void seek() {
       seenFirstDts = false;
+      if (pesPayloadReaders == null) {
+        return;
+      }
       if (pesPayloadReader instanceof ElementaryStreamReaderStub) {
         for (int i = 0; i < pesPayloadReaders.size(); i++) {
           ElementaryStreamReader reader = pesPayloadReaders.valueAt(i);
@@ -508,7 +525,7 @@ public final class PsExtractor implements Extractor {
       parseHeader();
       data.readBytes(pesScratch.data, 0, extendedHeaderLength);
       pesScratch.setPosition(0);
-      parseHeaderExtension();
+      long timeUs = parseHeaderExtension();
       ElementaryStreamReader pesPayloadReader = this.pesPayloadReader;
       int streamId = this.streamId;
       if (pesPayloadReader instanceof ElementaryStreamReaderStub) {
@@ -516,8 +533,11 @@ public final class PsExtractor implements Extractor {
         streamId = startCode;
         // AC3 reader need to skip these 3 bytes, but not for VobSub reader
         ElementaryStreamReaderStub stub = (ElementaryStreamReaderStub) pesPayloadReader;
-        pesPayloadReader = pesPayloadReaders.get(startCode);
+        pesPayloadReader = pesPayloadReaders != null ? pesPayloadReaders.get(startCode) : null;
         if (pesPayloadReader == null) {
+          if (pesPayloadReaders == null) {
+            return;
+          }
           pesPayloadReader = stub.applyForReader(startCode);
           if (pesPayloadReader != null) {
             pesPayloadReader.createTracks(stub.extractorOutput, stub.idGenerator);
@@ -531,7 +551,29 @@ public final class PsExtractor implements Extractor {
         }
       }
 
+      if (pesPayloadReader instanceof VobsubReader
+          && !subtitleTimeMustAlignWithNavPack && timeUs != C.TIME_UNSET) {
+        // use PES time by default instead of video timestamp, found such cases in real world
+        timeUs -= globalFirstVobUTimeUs != C.TIME_UNSET ? globalFirstVobUTimeUs : 0;
+      } else {
+        timeUs = alignTimeWithDvdNavPack(streamId, timeUs);
+      }
+      if (timeUs != C.TIME_UNSET && streamId == VIDEO_STREAM && videoStartUs != C.TIME_UNSET) {
+        timeUs += videoStartUs;
+      }
+      pesPayloadReader.packetStarted(timeUs, TsPayloadReader.FLAG_DATA_ALIGNMENT_INDICATOR);
+      pesPayloadReader.consume(data);
+      // We always have complete PES packets with program stream.
+      pesPayloadReader.packetFinished(/* isEndOfInput= */ false);
+    }
+
+    private long alignTimeWithDvdNavPack(int streamId, long timeUs) {
+      // because subtitle packet number is too few to get accurate offset, so use video stream time
+      if (streamId >= 0x20 && streamId <= 0x3f) {
+        streamId = VIDEO_STREAM;
+      }
       if (timeOffsetNeedsUpdateArray.indexOfKey(streamId) < 0) {
+        // it's a new streamId
         timeOffsetNeedsUpdateArray.put(streamId, true);
       }
       if (timeOffsetUsBetweenVobUAndPesArray.indexOfKey(streamId) < 0) {
@@ -541,48 +583,16 @@ public final class PsExtractor implements Extractor {
       if (timeUs != C.TIME_UNSET) {
         if (timeUsFromVobU != C.TIME_UNSET && timeOffsetNeedsUpdateArray.get(streamId)) {
           timeOffsetUsBetweenVobUAndPes = timeUs - timeUsFromVobU;
-          //logOffsetWithVobU(streamId, timeUs, timeUsFromVobU, timeOffsetUsBetweenVobUAndPes);
           timeOffsetUsBetweenVobUAndPesArray.put(streamId, timeOffsetUsBetweenVobUAndPes);
-          lastOffset = timeOffsetUsBetweenVobUAndPes;
           timeUs = timeUsFromVobU;
+          timeOffsetNeedsUpdateArray.put(streamId, false);
         } else {
           if (timeOffsetUsBetweenVobUAndPes != C.TIME_UNSET) {
-            //logTimeUsAlignWithVobU(streamId, timeUs, timeOffsetUsBetweenVobUAndPes);
             timeUs = timeUs - timeOffsetUsBetweenVobUAndPes;
           }
         }
-        timeOffsetNeedsUpdateArray.put(streamId, false);
       }
-      long timeUs = this.timeUs;
-      // for audio tracks, subtitle tracks, use video timestamp
-      if (streamId != VIDEO_STREAM) {
-        // timeUs = getTimeUsFromVideoStreamReader(timeUs);
-      }
-      pesPayloadReader.packetStarted(timeUs, TsPayloadReader.FLAG_DATA_ALIGNMENT_INDICATOR);
-      pesPayloadReader.consume(data);
-      // We always have complete PES packets with program stream.
-      pesPayloadReader.packetFinished(/* isEndOfInput= */ false);
-    }
-
-    private void logOffsetWithVobU(
-        int streamId, long timeUs, long timeUsFromVobU, long timeOffsetUsBetweenVobUAndPes) {
-      if (Math.abs(lastOffset - timeOffsetUsBetweenVobUAndPes) > 20_000) {
-        Log.i(TAG, "```timeOffsetUsBetweenVobUAndPes="
-            + Util.timeString(timeOffsetUsBetweenVobUAndPes / 1000)
-            + " timeUs=" + Util.timeString(timeUs / 1000)
-            + " timeUsFromVobU=" + Util.timeString(timeUsFromVobU / 1000)
-            + " streamId=0x" + Integer.toHexString(streamId));
-      }
-    }
-
-    private void logTimeUsAlignWithVobU(
-        int streamId, long timeUs, long timeOffsetUsBetweenVobUAndPes) {
-      Log.i(TAG, "```" + Integer.toHexString(streamId)
-          + " PTSTime=" + Util.timeString(timeUs / 1000)
-          + " timeOffsetUsBetweenVobUAndPes="
-          + Util.timeString(timeOffsetUsBetweenVobUAndPes / 1000)
-          + " PTS - timeOffsetUsBetweenVobUAndPes="
-          + Util.timeString((timeUs - timeOffsetUsBetweenVobUAndPes) / 1000));
+      return timeUs;
     }
 
     private void parseHeader() {
@@ -599,9 +609,9 @@ public final class PsExtractor implements Extractor {
       extendedHeaderLength = pesScratch.readBits(8);
     }
 
-    private void parseHeaderExtension() {
+    private long parseHeaderExtension() {
       // to prevent timeUs from stopping stepping forward
-      timeUs = C.TIME_UNSET;
+      long timeUs = C.TIME_UNSET;
       if (ptsFlag) {
         pesScratch.skipBits(4); // '0010' or '0011'
         long pts = (long) pesScratch.readBits(3) << 30;
@@ -628,9 +638,11 @@ public final class PsExtractor implements Extractor {
         }
         timeUs = timestampAdjuster.adjustTsTimestamp(pts);
       }
+      return timeUs;
     }
   }
 
+  @SuppressWarnings("unused")
   private class PrivateStream2Reader {
 
     private static final String TAG = "PrivateStream2Reader";
@@ -691,10 +703,22 @@ public final class PsExtractor implements Extractor {
         // 00 00 for PREU and non-interleaved blocks
         // ff ff for the last interleaved block, indicating the end of interleaving
         long nextIlvuSize = ba.readShort();
+        long videoStartUs = ba.readInt() * 1000L / 90; // PTM of first video frame in first GOP of VOB
+//        ba.readInt(); // PTM of last video frame in last GOP of VOB
+//        long[] audioStartUs = new long[8];
+//        for (int i = 0; i < 8; i++) {
+//          audioStartUs[i] = ba.readInt() * 1000 / 90; // PTM of first audio gap in stream 0
+//          ba.readInt(); // PTM of second audio gap in stream 0
+//          ba.readInt(); // duration, in 90KHz clocks, of first audio gap in stream 0
+//          ba.readInt(); // duration, in 90KHz clocks, of second audio gap in stream 0
+//        }
         int vobIdNrCellNr = (vobNr << 8) | cellNr;
         long cellStartTime = cellsWithStartTimes.get(vobIdNrCellNr, C.TIME_UNSET);
         if (cellStartTime != C.TIME_UNSET) {
-          setTimeUsFromVobU(cellStartTime + TsUtil.dvdTimeToUs(cellElapsed));
+          if (vobNr != lastVobNr || cellNr != lastCellNr) {
+            // not to set time too frequent, found T2 play on ShieldTV stuck due to inaccurate time
+            setTimeUsFromVobU(cellStartTime + TsUtil.dvdTimeToUs(cellElapsed), videoStartUs);
+          }
           skipInterleavedVobU = false;
         } else {
           unsetTimeUsFromVobU();
@@ -720,6 +744,11 @@ public final class PsExtractor implements Extractor {
         lastVobNr = vobNr;
         lastCellNr = cellNr;
       }
+    }
+
+    public void onSeek() {
+      lastVobNr = -1;
+      lastCellNr = -1;
     }
 
     private int lastVobNr, lastCellNr;
