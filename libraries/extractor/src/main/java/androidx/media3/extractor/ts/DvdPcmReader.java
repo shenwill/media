@@ -160,9 +160,44 @@ public final class DvdPcmReader
   // return total duration
   private long outputSamples(ParsableByteArray data, int blocks) {
     assert data.bytesLeft() >= blocks * blockSize;
+    swapBytes(data, blocks);
     int bytesToRead = blocks * blockSize;
     output.sampleData(data, bytesToRead);
     return blocks * samplesPerBlock * C.MICROS_PER_SECOND / sampleRateHz;
+  }
+
+  byte[] temp = new byte[12];
+  private void swapBytes(ParsableByteArray data, int blocks) {
+    byte[] bytes = data.getData();
+    int p = data.getPosition();
+    if (bitsPerSample == 24) {
+      assert blockSize % 12 == 0;
+      if (channelCount == 1) {
+        for (; blocks > 0; blocks--) {
+          for (int l = 0; l < 2; l++) {
+            System.arraycopy(bytes, p, temp, 0, 6);
+            for (int i = 0; i < 2; i++) {
+              bytes[p + 3 * i] = temp[2 * i];
+              bytes[p + 3 * i + 1] = temp[2 * i + 1];
+              bytes[p + 3 * i + 2] = temp[4 + i];
+            }
+            p += 6;
+          }
+        }
+      } else {
+        for (; blocks > 0; blocks--) {
+          for (int l = 0; l < groupsPerBlock; l++) {
+            System.arraycopy(bytes, p, temp, 0, 12);
+            for (int i = 0; i < 4; i++) {
+              bytes[p + 3 * i] = temp[2 * i];
+              bytes[p + 3 * i + 1] = temp[2 * i + 1];
+              bytes[p + 3 * i + 2] = temp[8 + i];
+            }
+            p += 12;
+          }
+        }
+      }
+    }
   }
 
   private void processSamples(ParsableByteArray data) {
@@ -191,6 +226,8 @@ public final class DvdPcmReader
     if (blocksOutputted > 0 && durationAddUp > 0) {
       output.sampleMetadata(
           timeUs, C.BUFFER_FLAG_KEY_FRAME, blocksOutputted * blockSize, 0, null);
+//      android.util.Log.i("DVDPCM", "---===DVDPcm output time=" + Util.timeStringUs(timeUs)
+//      + " size=" + (blocksOutputted * blockSize));
       timeUs += durationAddUp;
     }
     int bytesLeft = data.bytesLeft();

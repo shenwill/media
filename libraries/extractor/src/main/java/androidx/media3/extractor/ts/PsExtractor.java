@@ -500,13 +500,12 @@ public final class PsExtractor implements Extractor {
      */
     public void seek() {
       seenFirstDts = false;
-      if (pesPayloadReaders == null) {
-        return;
-      }
       if (pesPayloadReader instanceof ElementaryStreamReaderStub) {
-        for (int i = 0; i < pesPayloadReaders.size(); i++) {
-          ElementaryStreamReader reader = pesPayloadReaders.valueAt(i);
-          reader.seek();
+        if (pesPayloadReaders != null) {
+          for (int i = 0; i < pesPayloadReaders.size(); i++) {
+            ElementaryStreamReader reader = pesPayloadReaders.valueAt(i);
+            reader.seek();
+          }
         }
       } else {
         pesPayloadReader.seek();
