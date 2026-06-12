@@ -248,8 +248,8 @@ public class ElementaryStreamReaderStub implements ElementaryStreamReader {
                 : quantization == 1 ? 20
                 : quantization == 2 ? 24
                 : quantization == 3 ? /* drc */ 0 : -1;
-            int frequency = ((bytes[base + 1] & 0b00110000) >> 4) == 0 ? 48_000 : 0;
-            int channels = bytes[base + 1] & 0b00000011 + 1;
+            int frequency = ((bytes[base + 1] & 0b00110000) >> 4) == 0 ? 48_000 : 96_000;
+            int channels = (bytes[base + 1] & 0b00000111) + 1;
             // uint16_t lang_code;
             String lang = type == 1
                 && Character.isAlphabetic(bytes[base + 2])
