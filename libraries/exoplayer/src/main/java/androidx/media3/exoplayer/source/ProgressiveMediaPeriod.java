@@ -742,7 +742,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     }
     for (int i = 0; i < sampleQueues.length; i++) {
       Format format = sampleQueues[i].getUpstreamFormat();
-      if (format != null && MimeTypes.isVideo(format.sampleMimeType)) {
+      if (format != null) {
         Metadata metadata = format.metadata;
         Metadata newMetadata = metadata != null ? metadata.copyWithAppendedEntries(chapterTocFrame)
             : new Metadata(chapterTocFrame);
@@ -852,7 +852,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       }
       trackFormat = trackFormat.copyWithCryptoType(drmSessionManager.getCryptoType(trackFormat));
 
-      if (chapterTocFrame != null && MimeTypes.isVideo(mimeType)) {
+      if (chapterTocFrame != null) {
         Metadata metadata = trackFormat.metadata;
         Metadata newMetadata = metadata != null ? metadata.copyWithAppendedEntries(chapterTocFrame)
             : new Metadata(chapterTocFrame);
