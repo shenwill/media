@@ -43,6 +43,7 @@ import androidx.media3.extractor.SeekMap;
 import androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator;
 
 import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
@@ -315,7 +316,8 @@ public final class PsExtractor implements Extractor {
                       .build()
               ))
               : null;
-          elementaryStreamReader = new H262Reader(userDataReader, initDataBytes);
+          elementaryStreamReader = new H262Reader(
+              userDataReader, getChapterTimesNs(initDataBytes));
           foundVideoTrack = true;
           lastTrackPosition = input.getPosition();
         } else if (streamId != PADDING_STREAM) {
@@ -366,6 +368,7 @@ public final class PsExtractor implements Extractor {
   }
 
   public void setTimeUsFromVobU(long timeUsFromVobU, long videoStartUs) {
+    // Log.i(TAG, "timeUsFromVobU=" + Util.timeStringUs(timeUsFromVobU));
     if (globalFirstVobUTimeUs == C.TIME_UNSET) {
       globalFirstVobUTimeUs = timeUsFromVobU;
     }
@@ -406,6 +409,22 @@ public final class PsExtractor implements Extractor {
       cells.put(vobIdNrCellNr, ba.readUnsignedLongToLong());
     }
     return cells;
+  }
+
+  @Nullable
+  private long[] getChapterTimesNs(byte[][] initDataBytes) {
+    byte[] bytes = initDataBytes != null ? initDataBytes[7] : null;
+    if (bytes == null || bytes.length == 0) {
+      return null;
+    }
+    long[] timesUs = new long[bytes.length / 8];
+    int p = 0;
+    for (int i = 0; i < timesUs.length; i++) {
+      timesUs[i] = Longs.fromBytes(
+          bytes[p++], bytes[p++], bytes[p++], bytes[p++],
+          bytes[p++], bytes[p++], bytes[p++], bytes[p++]);
+    }
+    return timesUs;
   }
 
   private long getDurationUsFromInfo(@Nullable byte[][] initDataBytes) {

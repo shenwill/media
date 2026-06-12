@@ -34,8 +34,6 @@ import androidx.media3.extractor.ExtractorOutput;
 import androidx.media3.extractor.TrackOutput;
 import androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator;
 
-import com.google.common.primitives.Longs;
-
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.util.ArrayList;
@@ -102,7 +100,10 @@ public final class H262Reader implements ElementaryStreamReader {
   // per every picture
   @Nullable private MPEG2PictureHeader pictureHeader;
 
-  /* package */ H262Reader(@Nullable UserDataReader userDataReader, byte[][] initDataBytes) {
+  /* package */ H262Reader(
+      @Nullable UserDataReader userDataReader,
+      @Nullable long[] chapterTimeNsArray) {
+
     this.userDataReader = userDataReader;
     prefixFlags = new boolean[4];
     csdBuffer = new CsdBuffer(128);
@@ -113,7 +114,7 @@ public final class H262Reader implements ElementaryStreamReader {
       userData = null;
       userDataParsable = null;
     }
-    chapterTimesNs = getChapterTimesNs(initDataBytes);
+    chapterTimesNs = chapterTimeNsArray;
     csdFrameDurationUs = C.LENGTH_UNSET;
     pesTimeUs = C.TIME_UNSET;
     roughSampleTimeUs = C.TIME_UNSET;
@@ -299,22 +300,6 @@ public final class H262Reader implements ElementaryStreamReader {
       int size = (int) (totalBytesWritten - samplePosition);
       output.sampleMetadata(roughSampleTimeUs, flags, size, /* offset= */ 0, /* cryptoData= */ null);
     }
-  }
-
-  @Nullable
-  private long[] getChapterTimesNs(byte[][] initDataBytes) {
-    byte[] bytes = initDataBytes != null ? initDataBytes[7] : null;
-    if (bytes == null || bytes.length == 0) {
-      return null;
-    }
-    long[] timesUs = new long[bytes.length / 8];
-    int p = 0;
-    for (int i = 0; i < timesUs.length; i++) {
-      timesUs[i] = Longs.fromBytes(
-          bytes[p++], bytes[p++], bytes[p++], bytes[p++],
-          bytes[p++], bytes[p++], bytes[p++], bytes[p++]);
-    }
-    return timesUs;
   }
 
   // PictureHeader is not part of CSD (Codec-Specific Data) which is initialization metadata
