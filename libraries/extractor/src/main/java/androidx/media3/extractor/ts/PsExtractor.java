@@ -368,7 +368,7 @@ public final class PsExtractor implements Extractor {
     return RESULT_CONTINUE;
   }
 
-  public void setTimeUsFromVobU(long timeUsFromVobU, long videoStartUs) {
+  public void setTimeUsFromVobU(boolean newCell, long timeUsFromVobU, long videoStartUs) {
     // Log.i(TAG, "timeUsFromVobU=" + Util.timeStringUs(timeUsFromVobU));
     if (globalFirstVobUTimeUs == C.TIME_UNSET) {
       globalFirstVobUTimeUs = timeUsFromVobU;
@@ -382,7 +382,10 @@ public final class PsExtractor implements Extractor {
     if (this.videoStartUs == C.TIME_UNSET) {
       this.videoStartUs = videoStartUs;
     }
-    updateValueInSparseBooleanArray(true, timeOffsetNeedsUpdateArray);
+    // not to update Nav Pack time too frequent, found T2 on ShieldTV stuck due to inaccurate time
+    if (newCell) {
+      updateValueInSparseBooleanArray(true, timeOffsetNeedsUpdateArray);
+    }
   }
 
   public static void updateValueInSparseBooleanArray(boolean value, SparseBooleanArray array) {
@@ -739,10 +742,9 @@ public final class PsExtractor implements Extractor {
         int vobIdNrCellNr = (vobNr << 8) | cellNr;
         long cellStartTime = cellsWithStartTimes.get(vobIdNrCellNr, C.TIME_UNSET);
         if (cellStartTime != C.TIME_UNSET) {
-          if (vobNr != lastVobNr || cellNr != lastCellNr) {
-            // not to set time too frequent, found T2 play on ShieldTV stuck due to inaccurate time
-            setTimeUsFromVobU(cellStartTime + TsUtil.dvdTimeToUs(cellElapsed), videoStartUs);
-          }
+          boolean newCell = vobNr != lastVobNr || cellNr != lastCellNr;
+          long timeUs = cellStartTime + TsUtil.dvdTimeToUs(cellElapsed);
+          setTimeUsFromVobU(newCell, timeUs, videoStartUs);
           skipInterleavedVobU = false;
         } else {
           unsetTimeUsFromVobU();
