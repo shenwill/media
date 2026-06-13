@@ -215,6 +215,7 @@ public final class PsExtractor implements Extractor {
       psPayloadReaders.valueAt(i).seek();
     }
     skipInterleavedVobU = false;
+    timeUsFromVobU = C.TIME_UNSET;
     privateStream2Reader.onSeek();
   }
 
@@ -371,6 +372,11 @@ public final class PsExtractor implements Extractor {
     // Log.i(TAG, "timeUsFromVobU=" + Util.timeStringUs(timeUsFromVobU));
     if (globalFirstVobUTimeUs == C.TIME_UNSET) {
       globalFirstVobUTimeUs = timeUsFromVobU;
+    }
+    long gap = this.timeUsFromVobU != C.TIME_UNSET ? timeUsFromVobU - this.timeUsFromVobU : 0;
+    if (gap > 3_000_000) {
+      throw new UnsupportDvdVideoTimeException(
+          "timeUsFromVobU gap=" + Util.timeStringUs(gap));
     }
     this.timeUsFromVobU = timeUsFromVobU;
     if (this.videoStartUs == C.TIME_UNSET) {
@@ -770,5 +776,17 @@ public final class PsExtractor implements Extractor {
     }
 
     private int lastVobNr, lastCellNr;
+  }
+
+  public static final class UnsupportDvdVideoTimeException extends RuntimeException {
+
+    /**
+     * Creates a new invalid timestamp exception with the specified message.
+     *
+     * @param message The detail message for this exception.
+     */
+    private UnsupportDvdVideoTimeException(String message) {
+      super(message);
+    }
   }
 }
