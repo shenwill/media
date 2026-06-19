@@ -4199,14 +4199,17 @@ public final class Util {
   }
 
   @Nullable public static TranslationProvider translationProvider;
-  public static boolean translationDisabled;
   public static int PROCESSORS = Runtime.getRuntime().availableProcessors();
-  private static Map<CharSequence, CharSequence> translationCache = new ConcurrentHashMap<>();
+  private static boolean translationDisabled;
+  private static final Map<CharSequence, CharSequence> translationCache = new ConcurrentHashMap<>();
   private static final ExecutorService computation = Executors.newFixedThreadPool(PROCESSORS);
-  private static AtomicInteger translationTaskCount = new AtomicInteger(0);
-  private static Queue<Pair<CharSequence, String>> translationBuffer = new ConcurrentLinkedQueue<>();
+  private static final AtomicInteger translationTaskCount = new AtomicInteger(0);
+  private static final Queue<Pair<CharSequence, String>> translationBuffer = new ConcurrentLinkedQueue<>();
 
   public static CharSequence getTranslation(CharSequence s) {
+    if (TextUtils.isEmpty(s)) {
+      return s;
+    }
     CharSequence t = translationCache.get(s);
     if (t != null) {
       translationCache.remove(s);
@@ -4219,7 +4222,7 @@ public final class Util {
     if (TextUtils.isEmpty(text)) {
       return false;
     }
-    return text.matches("(?s).*[^\\x00-\\x7F♪].*");
+    return text.matches("(?s).*[^\\x00-\\x7F♪♫].*");
   }
 
   public static void translationReset() {
@@ -4228,17 +4231,18 @@ public final class Util {
     translationDisabled = false;
   }
 
-  public static void translationStop() {
+  public static void stopTranslation() {
+    Log.i(TAG, "stopTranslation()");
     translationBuffer.clear();
     translationCache.clear();
+    translationDisabled = true;
   }
 
   public static void translateToCache(CharSequence s, @NonNull CharSequence sep) {
-    if (!translationDisabled && translationProvider != null && !translationCache.containsKey(s)) {
-      translationDisabled = isNotEnglish(s.toString());
-      if (translationDisabled) {
-        Log.i(TAG, "translationStop=" + s);
-        translationStop();
+    if (!translationDisabled && translationProvider != null
+      && !TextUtils.isEmpty(s) && !translationCache.containsKey(s)) {
+      if (isNotEnglish(s.toString())) {
+        stopTranslation();
         return;
       }
       translationBuffer.add(new Pair(s, sep));
@@ -4265,6 +4269,7 @@ public final class Util {
           translationTaskCount.decrementAndGet();
           if (!Objects.equals(s, text)) {
             translationCache.put(s, text);
+            deQueueTranslationBuffer();
           }
         }));
       translationTaskCount.incrementAndGet();

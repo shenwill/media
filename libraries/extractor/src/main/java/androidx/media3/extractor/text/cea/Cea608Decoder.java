@@ -111,7 +111,7 @@ public final class Cea608Decoder extends CeaDecoder {
   protected void decode(SubtitleInputBuffer inputBuffer) {
     ByteBuffer subtitleData = checkNotNull(inputBuffer.data);
 
-    Util.translationDisabled = true;
+    Util.stopTranslation();
     cea608Parser.parse(
         subtitleData.array(),
         /* offset= */ subtitleData.arrayOffset(),
