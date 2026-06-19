@@ -198,7 +198,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       return;
     }
 
-    this.cueText = cue.text;
+    this.cueText = Util.getTranslation(cue.text);
     this.cueTextAlignment = cue.textAlignment;
     this.cueBitmap = cue.bitmap;
     this.cueLine = cue.line;

@@ -502,6 +502,7 @@ public final class Cue implements Bundleable {
     @CanIgnoreReturnValue
     public Builder setText(CharSequence text) {
       this.text = text;
+      Util.translateToCache(text, "\n");
       return this;
     }
 

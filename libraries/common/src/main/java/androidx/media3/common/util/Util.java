@@ -71,6 +71,7 @@ import android.security.NetworkSecurityPolicy;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Base64;
+import android.util.Pair;
 import android.util.SparseArray;
 import android.util.SparseLongArray;
 import android.view.Display;
@@ -80,6 +81,7 @@ import android.view.WindowManager;
 import androidx.annotation.ChecksSdkIntAtLeast;
 import androidx.annotation.DoNotInline;
 import androidx.annotation.DrawableRes;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.media3.common.C;
@@ -134,16 +136,21 @@ import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.MissingResourceException;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.DataFormatException;
@@ -2856,7 +2863,9 @@ public final class Util {
   }
 
   public static String timeStringUs(long timeUs) {
-    return timeUs == C.TIME_UNSET ? "?" : timeString(timeUs / 1000, true);
+    long base = 1_000_000_000_000L;
+    return timeUs == C.TIME_UNSET ? "?"
+        : timeString((timeUs > base ? (timeUs - base) : timeUs) / 1000, true);
   }
 
   public static String timeString(long timeMs, boolean ms) {
@@ -4177,5 +4186,88 @@ public final class Util {
     }
 
     private Api29() {}
+  }
+
+  public interface TextCallback {
+    void onTextResult(CharSequence text);
+  }
+
+  public interface TranslationProvider {
+    CharSequence translateFromEnglish(@Nullable CharSequence s, @NonNull CharSequence sep);
+    void translateFromEnglishA(
+      @Nullable CharSequence s, @NonNull CharSequence sep, TextCallback callback);
+  }
+
+  @Nullable public static TranslationProvider translationProvider;
+  public static boolean translationDisabled;
+  public static int PROCESSORS = Runtime.getRuntime().availableProcessors();
+  private static Map<CharSequence, CharSequence> translationCache = new ConcurrentHashMap<>();
+  private static final ExecutorService computation = Executors.newFixedThreadPool(PROCESSORS);
+  private static AtomicInteger translationTaskCount = new AtomicInteger(0);
+  private static Queue<Pair<CharSequence, String>> translationBuffer = new ConcurrentLinkedQueue<>();
+
+  public static CharSequence getTranslation(CharSequence s) {
+    CharSequence t = translationCache.get(s);
+    if (t != null) {
+      translationCache.remove(s);
+      return TextUtils.isEmpty(t) ? s : t;
+    }
+    return s;
+  }
+
+  public static boolean isNotEnglish(String text) {
+    if (TextUtils.isEmpty(text)) {
+      return false;
+    }
+    return text.matches("(?s).*[^\\x00-\\x7F♪].*");
+  }
+
+  public static void translationReset() {
+    translationBuffer.clear();
+    translationCache.clear();
+    translationDisabled = false;
+  }
+
+  public static void translationStop() {
+    translationBuffer.clear();
+    translationCache.clear();
+  }
+
+  public static void translateToCache(CharSequence s, @NonNull CharSequence sep) {
+    if (!translationDisabled && translationProvider != null && !translationCache.containsKey(s)) {
+      translationDisabled = isNotEnglish(s.toString());
+      if (translationDisabled) {
+        Log.i(TAG, "translationStop=" + s);
+        translationStop();
+        return;
+      }
+      translationBuffer.add(new Pair(s, sep));
+      deQueueTranslationBuffer();
+    }
+  }
+
+  private static void deQueueTranslationBuffer() {
+    if (translationBuffer.isEmpty()) {
+      return;
+    }
+    while (translationTaskCount.get() < PROCESSORS) {
+      Pair<CharSequence, String> pair = translationBuffer.poll();
+      if (pair == null) {
+        break;
+      }
+      if (TextUtils.isEmpty(pair.first)) {
+        continue;
+      }
+      CharSequence s = pair.first;
+      translationCache.put(s, "");
+      computation.submit(() ->
+        translationProvider.translateFromEnglishA(s, pair.second, text -> {
+          translationTaskCount.decrementAndGet();
+          if (!Objects.equals(s, text)) {
+            translationCache.put(s, text);
+          }
+        }));
+      translationTaskCount.incrementAndGet();
+    }
   }
 }

@@ -21,6 +21,7 @@ import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.common.util.Util;
 import androidx.media3.extractor.text.CuesWithTiming;
 import androidx.media3.extractor.text.CuesWithTimingSubtitle;
 import androidx.media3.extractor.text.Subtitle;
@@ -110,6 +111,7 @@ public final class Cea608Decoder extends CeaDecoder {
   protected void decode(SubtitleInputBuffer inputBuffer) {
     ByteBuffer subtitleData = checkNotNull(inputBuffer.data);
 
+    Util.translationDisabled = true;
     cea608Parser.parse(
         subtitleData.array(),
         /* offset= */ subtitleData.arrayOffset(),
