@@ -4223,7 +4223,8 @@ public final class Util {
     if (TextUtils.isEmpty(text)) {
       return false;
     }
-    return text.matches("(?s).*[^\\x00-\\x80♪♫\\xe0-\\xff]].*");
+    return text.matches(
+      "(?s).*(?:[^\\x00-\\x80♪♫\\xe0-\\xff]|\\bdas\\b|\\bde\\b|\\bel\\b|\\bil\\b|\\ble\\b|\\bly\\b|\\bvà\\b|\\bve\\b).*");
   }
 
   public static void translationReset() {
