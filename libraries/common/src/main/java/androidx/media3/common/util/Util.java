@@ -189,6 +189,8 @@ public final class Util {
   public static final String DEVICE_DEBUG_INFO =
       DEVICE + ", " + MODEL + ", " + MANUFACTURER + ", " + SDK_INT;
 
+  public static final Handler handlerOnMainLooper = new Handler(Looper.getMainLooper());
+
   /** An empty byte array. */
   @UnstableApi public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
 
@@ -4193,7 +4195,6 @@ public final class Util {
   }
 
   public interface TranslationProvider {
-    CharSequence translateFromEnglish(@Nullable CharSequence s, @NonNull CharSequence sep);
     void translateFromEnglishA(
       @Nullable CharSequence s, @NonNull CharSequence sep, TextCallback callback);
   }
@@ -4222,7 +4223,7 @@ public final class Util {
     if (TextUtils.isEmpty(text)) {
       return false;
     }
-    return text.matches("(?s).*[^\\x00-\\x7F♪♫].*");
+    return text.matches("(?s).*[^\\x00-\\x80♪♫\\xe0-\\xff]].*");
   }
 
   public static void translationReset() {
@@ -4264,7 +4265,10 @@ public final class Util {
       }
       CharSequence s = pair.first;
       translationCache.put(s, "");
-      computation.submit(() ->
+      // found Main thread Blocked at com.google.android.gms.common.internal.zzp.onServiceConnected
+      // (com.google.android.gms:play-services-basement@@18.3.0:1). It was waiting, trying to
+      // acquire lock 0x03f28644 (java.util.HashMap). So always getClient() on main thread.
+      handlerOnMainLooper.post(() ->
         translationProvider.translateFromEnglishA(s, pair.second, text -> {
           translationTaskCount.decrementAndGet();
           if (!Objects.equals(s, text)) {
