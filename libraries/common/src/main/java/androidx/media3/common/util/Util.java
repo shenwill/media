@@ -4201,14 +4201,14 @@ public final class Util {
 
   @Nullable public static TranslationProvider translationProvider;
   public static int PROCESSORS = Runtime.getRuntime().availableProcessors();
+  public static Boolean translationDisabledRequested;
   private static boolean translationDisabled;
   private static final Map<CharSequence, CharSequence> translationCache = new ConcurrentHashMap<>();
-  private static final ExecutorService computation = Executors.newFixedThreadPool(PROCESSORS);
   private static final AtomicInteger translationTaskCount = new AtomicInteger(0);
   private static final Queue<Pair<CharSequence, String>> translationBuffer = new ConcurrentLinkedQueue<>();
 
   public static CharSequence getTranslation(CharSequence s) {
-    if (TextUtils.isEmpty(s)) {
+    if (translationDisabled || TextUtils.isEmpty(s)) {
       return s;
     }
     CharSequence t = translationCache.get(s);
@@ -4230,20 +4230,38 @@ public final class Util {
   public static void translationReset() {
     translationBuffer.clear();
     translationCache.clear();
-    translationDisabled = false;
+    translationDisabled = translationDisabledRequested != null && translationDisabledRequested;
+  }
+
+  public static void translationResetByUser() {
+    translationDisabledRequested = null;
+    translationReset();
   }
 
   public static void stopTranslation() {
+    if (translationDisabledRequested != null && !translationDisabledRequested) {
+      return;
+    }
     Log.i(TAG, "stopTranslation()");
+    translationDisabled = true;
     translationBuffer.clear();
     translationCache.clear();
-    translationDisabled = true;
+  }
+
+  public static void startTranslationByUser() {
+    translationDisabledRequested = false;
+    translationDisabled = false;
+  }
+
+  public static void stopTranslationByUser() {
+    translationDisabledRequested = true;
+    stopTranslation();
   }
 
   public static void translateToCache(CharSequence s, @NonNull CharSequence sep) {
     if (!translationDisabled && translationProvider != null
       && !TextUtils.isEmpty(s) && !translationCache.containsKey(s)) {
-      if (isNotEnglish(s.toString())) {
+      if (translationDisabledRequested == null && isNotEnglish(s.toString())) {
         stopTranslation();
         return;
       }
