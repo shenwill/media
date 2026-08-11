@@ -399,6 +399,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
             cueLineAnchor == Cue.ANCHOR_TYPE_END
                 ? (anchorY - height)
                 : cueLineAnchor == Cue.ANCHOR_TYPE_MIDDLE ? (anchorY - (height / 2)) : anchorY);
+    if (bottomPaddingFraction != DEFAULT_BOTTOM_PADDING_FRACTION) {
+      y += (DEFAULT_BOTTOM_PADDING_FRACTION - bottomPaddingFraction) * parentHeight;
+    }
     bitmapRect = new Rect(x, y, x + width, y + height);
   }
 
