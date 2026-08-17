@@ -4224,7 +4224,7 @@ public final class Util {
       return false;
     }
     return text.matches(
-      "(?s).*(?:[^\\x00-\\x80♪♫\\xe0-\\xff]|\\bdas\\b|\\bde\\b|\\bel\\b|\\bil\\b|\\ble\\b|\\bly\\b|\\bvà\\b|\\bve\\b).*");
+      "(?s).*(?:[^\\x00-\\x80♪♫\\xe0-\\xff]|\\bdas\\b|\\bde\\b|\\bel\\b|\\bil\\b|\\ble\\b|\\bly\\b|\\bvà\\b|(?<!['’])\\bve\\b).*");
   }
 
   public static void translationReset() {
@@ -4262,6 +4262,7 @@ public final class Util {
     if (!translationDisabled && translationProvider != null
       && !TextUtils.isEmpty(s) && !translationCache.containsKey(s)) {
       if (translationDisabledRequested == null && isNotEnglish(s.toString())) {
+        Log.i(TAG, "---===stopTranslation due to " + s);
         stopTranslation();
         return;
       }
