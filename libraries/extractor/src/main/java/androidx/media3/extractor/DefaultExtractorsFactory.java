@@ -593,7 +593,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         break;
       case FileTypes.RM:
       case FileTypes.RMVB:
-        extractors.add(new RmvbExtractor());
+        // extractors.add(new RmvbExtractor());
         break;
       case FileTypes.WEBVTT:
       case FileTypes.UNKNOWN:
