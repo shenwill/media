@@ -346,7 +346,7 @@ public final class SubtitleView extends FrameLayout {
         : CaptionStyleCompat.DEFAULT;
   }
 
-  private void updateOutput() {
+  public void updateOutput() {
     output.update(
         getCuesWithStylingPreferencesApplied(),
         style,

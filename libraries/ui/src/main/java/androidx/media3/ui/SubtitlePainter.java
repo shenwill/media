@@ -15,6 +15,7 @@
  */
 package androidx.media3.ui;
 
+import static androidx.media3.common.util.ColorDimmer.dimByToneMapSdrToHdr;
 import static androidx.media3.ui.SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION;
 
 import android.content.Context;
@@ -54,7 +55,19 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   public static float sLetterSpacing = 0.2f;
   public static Typeface sTypeface = null;
   private Typeface typefaceSaved = null;
+  private final static int MAX_OPACITY_LEVEL = 16;
+  private static int opacityLevel = MAX_OPACITY_LEVEL;
   private static final String TAG = "SubtitlePainter";
+
+  public static int getDim() {
+    return MAX_OPACITY_LEVEL - opacityLevel;
+  }
+
+  public static void setDim(int dim) {
+    if (dim >= 0 && dim <= MAX_OPACITY_LEVEL) {
+      opacityLevel = MAX_OPACITY_LEVEL - dim;
+    }
+  }
 
   /** Ratio of inner padding to font size. */
   private static final float INNER_PADDING_RATIO = 0.125f;
@@ -405,6 +418,16 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     bitmapRect = new Rect(x, y, x + width, y + height);
   }
 
+  private int dim(int color) {
+    if (opacityLevel == MAX_OPACITY_LEVEL) {
+      return color;
+    }
+    if (((color >> 24) & 0xff) == 0) {
+      return 0;
+    }
+    return dimByToneMapSdrToHdr(color, opacityLevel);
+  }
+
   private void drawLayout(Canvas canvas, boolean isTextCue) {
     if (isTextCue) {
       drawTextLayout(canvas);
@@ -438,6 +461,10 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     int saveCount = canvas.save();
     canvas.translate(textLeft, textTop);
 
+    int edgeColor = dim(this.edgeColor);
+    int foregroundColor = dim(this.foregroundColor);
+    int windowColor = dim(this.windowColor);
+
     if (Color.alpha(windowColor) > 0) {
       windowPaint.setColor(windowColor);
       canvas.drawRect(
@@ -459,8 +486,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     } else if (edgeType == CaptionStyleCompat.EDGE_TYPE_RAISED
         || edgeType == CaptionStyleCompat.EDGE_TYPE_DEPRESSED) {
       boolean raised = edgeType == CaptionStyleCompat.EDGE_TYPE_RAISED;
-      int colorUp = raised ? Color.WHITE : edgeColor;
-      int colorDown = raised ? edgeColor : Color.WHITE;
+      int colorWhite = dim(Color.WHITE);
+      int colorUp = raised ? colorWhite : edgeColor;
+      int colorDown = raised ? edgeColor : colorWhite;
       float offset = shadowRadius / 2f;
       textPaint.setColor(foregroundColor);
       textPaint.setStyle(Style.FILL);

@@ -15,6 +15,12 @@
  */
 package androidx.media3.extractor.text.pgs;
 
+import static androidx.media3.common.util.ColorDimmer.MAX_OPACITY_LEVEL;
+import static androidx.media3.common.util.ColorDimmer.PEAK_NIT;
+import static androidx.media3.common.util.ColorDimmer.STANDARD_TARGET_GAMMA;
+import static androidx.media3.common.util.ColorDimmer.TARGET_NIT_MAX;
+import static androidx.media3.common.util.ColorDimmer.TARGET_NIT_MIN;
+import static androidx.media3.common.util.ColorDimmer.dimByToneMapSdrToHdr;
 import static java.lang.Math.min;
 
 import android.graphics.Bitmap;
@@ -25,6 +31,7 @@ import androidx.media3.common.Format;
 import androidx.media3.common.Format.CueReplacementBehavior;
 import androidx.media3.common.text.Cue;
 import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.ColorDimmer;
 import androidx.media3.common.util.Consumer;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.UnstableApi;
@@ -423,6 +430,7 @@ public final class PgsParser implements SubtitleParser {
 
   public static final class RleBitmapContext implements Cue.IBitmapDrawContext {
 
+    private static int opacityLevel = MAX_OPACITY_LEVEL;
     ParsableByteArray buffer;
     final int bitmapWidth, bitmapHeight;
     final int[] colors;
@@ -433,6 +441,18 @@ public final class PgsParser implements SubtitleParser {
       this.colors = Arrays.copyOf(colors, colors.length);
     }
 
+    public static int getDim() {
+      return MAX_OPACITY_LEVEL - opacityLevel;
+    }
+
+    public static void setDim(int dim) {
+      if (dim >= 0 && dim <= MAX_OPACITY_LEVEL) {
+        opacityLevel = MAX_OPACITY_LEVEL - dim;
+        colorCache.reset();
+        Arrays.fill(greyColorCache, -1);
+      }
+    }
+
     public Bitmap draw(ParsableByteArray bitmapData) {
       // Build the bitmapData.
       bitmapData.setPosition(0);
@@ -441,7 +461,7 @@ public final class PgsParser implements SubtitleParser {
       while (argbBitmapDataIndex < argbBitmapData.length) {
         int colorIndex = bitmapData.readUnsignedByte();
         if (colorIndex != 0) {
-          argbBitmapData[argbBitmapDataIndex++] = colors[colorIndex];
+          argbBitmapData[argbBitmapDataIndex++] = dim(colors[colorIndex]);
         } else {
           int switchBits = bitmapData.readUnsignedByte();
           if (switchBits != 0) {
@@ -451,14 +471,64 @@ public final class PgsParser implements SubtitleParser {
                     : (((switchBits & 0x3F) << 8) | bitmapData.readUnsignedByte());
             int color =
                 (switchBits & 0x80) == 0 ? colors[0] : colors[bitmapData.readUnsignedByte()];
+            color = dim(color);
             Arrays.fill(
                 argbBitmapData, argbBitmapDataIndex, argbBitmapDataIndex + runLength, color);
             argbBitmapDataIndex += runLength;
           }
         }
       }
+//      Log.i("TAG", "---===spent=" +       (SystemClock.elapsedRealtime()- timeStarted)
+//      + " cacheHit=" + cacheHit + " missed="+cacheMiss
+//      + " greyColorCache=" +                Arrays.stream(greyColorCache).mapToObj(Integer::toHexString).collect(Collectors.joining(" "))
+//      );
+//      cacheHit=cacheMiss=0;
       return Bitmap.createBitmap(
           argbBitmapData, bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888);
+    }
+
+    private static final int[] greyColorCache = new int[256];
+    private static final androidx.media3.common.util.DirectMappedIntCache colorCache = new androidx.media3.common.util.DirectMappedIntCache(2 ^ 9, -1);
+
+    private int getColorFromCache(final int argb) {
+      final int r = (argb >> 16) & 0xFF;
+      final int g = (argb >> 8) & 0xFF;
+      final int b = argb & 0xFF;
+      if (r == g && g == b) {
+        return greyColorCache[r] != -1 ? (argb & 0xff000000) | greyColorCache[r] : 0;
+      }
+      final int rgb = argb & 0x00ffffff;
+      final int rgbFound = colorCache.get(rgb);
+      return rgbFound != -1 ? rgbFound | (argb & 0xff000000) : 0;
+    }
+
+    private void setColorToCache(int argb, int argbResult) {
+      int r = (argb >> 16) & 0xFF;
+      int g = (argb >> 8) & 0xFF;
+      int b = argb & 0xFF;
+      int rgb = argb & 0x00ffffff;
+      int rgbResult = argbResult & 0x00ffffff;
+      if (r == g && g == b) {
+        greyColorCache[r] = rgbResult;
+        return;
+      }
+      colorCache.put(rgb, rgbResult);
+    }
+
+    private int dim(int color) {
+      if (opacityLevel == MAX_OPACITY_LEVEL) {
+        return color;
+      }
+      if (((color >> 24) & 0xff) == 0) {
+        return 0;
+      }
+      int colorCached = getColorFromCache(color);
+      if (colorCached != 0) {
+        return colorCached;
+      }
+      int colorResult = dimByToneMapSdrToHdr(color, opacityLevel);
+      setColorToCache(color, colorResult);
+      return colorResult;
     }
 
     @Override
