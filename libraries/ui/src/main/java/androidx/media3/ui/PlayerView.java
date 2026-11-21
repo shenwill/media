@@ -299,6 +299,7 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
   private boolean controllerHideOnTouch;
   private int textureViewRotation;
   private boolean isTouching;
+  private int[] artworkInfo;
 
   public PlayerView(Context context) {
     this(context, /* attrs= */ null);
@@ -644,10 +645,23 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
     return contentFrame.getResizeMode();
   }
 
+  public void moveContent(float x, float y) {
+    contentFrame.setTranslationX(x);
+    contentFrame.setTranslationY(y);
+  }
+
+  public float getContentTranslationX() {
+    return contentFrame.getTranslationX();
+  }
+
+  public float getContentTranslationY() {
+    return contentFrame.getTranslationY();
+  }
+
   public void zoomVideo(int widthZoomed, int heightZoomed) {
     setContentViewSize(
-        contentFrame.getWidth() + widthZoomed,
-        contentFrame.getHeight() + heightZoomed);
+        Math.max(0, contentFrame.getWidth() + widthZoomed),
+        Math.max(0, contentFrame.getHeight() + heightZoomed));
   }
 
   public void resetZoomVideo() {
@@ -1348,6 +1362,14 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
     return ImmutableList.copyOf(overlayViews);
   }
 
+  public int[] getArtworkInfo() {
+    return artworkInfo;
+  }
+
+  public void resetArtworkInfo() {
+    artworkInfo = null;
+  }
+
   // Internal methods.
 
   @EnsuresNonNullIf(expression = "controller", result = true)
@@ -1473,6 +1495,15 @@ public class PlayerView extends FrameLayout implements AdViewProvider {
     Bitmap bitmap =
         BitmapFactory.decodeByteArray(
             mediaMetadata.artworkData, /* offset= */ 0, mediaMetadata.artworkData.length);
+    if (bitmap != null) {
+      artworkInfo = new int[]{
+          mediaMetadata.artworkData.length,
+          bitmap.getWidth(),
+          bitmap.getHeight(),
+      };
+    } else {
+      artworkInfo = new int[]{mediaMetadata.artworkData.length};
+    }
     return setDrawableArtwork(new BitmapDrawable(getResources(), bitmap));
   }
 
