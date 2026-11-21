@@ -16,10 +16,12 @@
 package androidx.media3.extractor.ape;
 
 import androidx.media3.common.C;
+import androidx.media3.common.Metadata;
 import androidx.media3.common.ParserException;
 import androidx.media3.common.util.Assertions;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.extractor.ExtractorInput;
+import androidx.media3.extractor.Id3Peeker;
 
 import com.google.common.base.Charsets;
 
@@ -39,8 +41,17 @@ public final class ApeHeaderReader {
 
   private static final byte[] apeSignature = "MAC ".getBytes(Charsets.US_ASCII);
 
-  public static boolean checkFileType(final ExtractorInput input) throws IOException {
+  public static boolean checkFileType(
+    final ExtractorInput input, final Metadata[] metadataRef, boolean read) throws IOException {
     input.resetPeekPosition();
+    Id3Peeker id3Peeker = new Id3Peeker();
+    Metadata metadata = id3Peeker.peekId3Data(input, /* id3FramePredicate= */ null);
+    if (metadata != null && read) {
+      input.skipFully((int) input.getPeekPosition());
+      if (metadataRef != null && metadataRef.length > 0) {
+        metadataRef[0] = metadata;
+      }
+    }
     byte[] bytes = new byte[4];
     input.peekFully(bytes, 0, bytes.length);
     return Arrays.equals(bytes, apeSignature);
@@ -48,15 +59,19 @@ public final class ApeHeaderReader {
 
   public static ApeInfo read(final ExtractorInput input) throws IOException {
     Assertions.checkState(input.getPosition() == 0);
-    if (!checkFileType(input)) {
+    Metadata[] metadataRef = new Metadata[1];
+    if (!checkFileType(input, metadataRef, /* read */ true)) {
       // Should only happen if the media wasn't sniffed.
       throw ParserException.createForMalformedContainer(
           "Unsupported or unrecognized APE file.", /* cause= */ null);
     }
+    long id3Length = input.getPosition();
 
     int version = peekVersion(input);
     input.resetPeekPosition();
     ApeInfo info = version >= 3980 ? readV3980(input) : readV0000(input);
+    info.id3Length = id3Length;
+    info.metadata = metadataRef[0];
 
     info.totalSamples = info.totalFrames == 0 ? 0 :
         (long) (info.totalFrames - 1) * info.blocksPerFrame + info.finalFrameBlocks;

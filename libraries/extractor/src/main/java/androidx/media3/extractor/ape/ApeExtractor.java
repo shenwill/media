@@ -68,7 +68,7 @@ public final class ApeExtractor implements Extractor {
 
   @Override
   public boolean sniff(ExtractorInput input) throws IOException {
-    return ApeHeaderReader.checkFileType(input);
+    return ApeHeaderReader.checkFileType(input, /* metadataRef */ null, /* read */ false);
   }
 
   @Override
@@ -210,7 +210,7 @@ public final class ApeExtractor implements Extractor {
         .setChannelCount(info.channels)
         .setInitializationData(Collections.singletonList(buildDecoderConfigExtraData(info)))
         .setMaxInputSize(Format.NO_VALUE)
-        .setMetadata(null)
+        .setMetadata(info.metadata)
         .setPcmEncoding(getPcmEncoding(info.bitsPerSample))
         .build();
     trackOutput.format(format);
@@ -237,7 +237,7 @@ public final class ApeExtractor implements Extractor {
       return;
     }
 
-    long junkLength = 0;
+    long junkLength = info.id3Length;
 
     long firstFramePosition = junkLength
         + info.descriptorLength
@@ -261,7 +261,7 @@ public final class ApeExtractor implements Extractor {
     // first element in seek table should be equal with firstFramePosition
     input.peekFully(scratch.getData(), 0, byteSize);
     long position = scratch.readLittleEndianUnsignedInt();
-    Assertions.checkState(position == firstFramePosition);
+    Assertions.checkState(position + junkLength == firstFramePosition);
     for (int i = 1; i < info.totalFrames; i++) {
       input.peekFully(scratch.getData(), 0, byteSize);
       scratch.setPosition(0);

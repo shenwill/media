@@ -15,6 +15,8 @@
  */
 package androidx.media3.extractor.ape;
 
+import androidx.media3.common.Metadata;
+
 public class ApeInfo {
 
   public int fileVersion;
@@ -31,6 +33,8 @@ public class ApeInfo {
 
   public long descriptorLength;
   public long headerLength;
+  public long id3Length;
+  public Metadata metadata;
   public long seekTableLength;
   public long wavHeaderLength;
   public long wavTailLength;
