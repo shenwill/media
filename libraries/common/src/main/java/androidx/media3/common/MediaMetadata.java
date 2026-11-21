@@ -60,6 +60,7 @@ public final class MediaMetadata implements Bundleable {
     @Nullable private Uri artworkUri;
     @Nullable private Integer trackNumber;
     @Nullable private Integer totalTrackCount;
+    private StringBuilder stringBuilder;
 
     @SuppressWarnings("deprecation") // Builder for deprecated field.
     @Nullable
@@ -174,6 +175,15 @@ public final class MediaMetadata implements Bundleable {
     public Builder setDescription(@Nullable CharSequence description) {
       this.description = description;
       return this;
+    }
+
+    public StringBuilder appendDescription(CharSequence description) {
+      if (this.stringBuilder == null) {
+        this.stringBuilder = new StringBuilder(description);
+      } else {
+        this.stringBuilder.append(description);
+      }
+      return this.stringBuilder;
     }
 
     /** Sets the user {@link Rating}. */
@@ -1111,7 +1121,7 @@ public final class MediaMetadata implements Bundleable {
     this.albumArtist = builder.albumArtist;
     this.displayTitle = builder.displayTitle;
     this.subtitle = builder.subtitle;
-    this.description = builder.description;
+    this.description = builder.stringBuilder != null ? builder.stringBuilder.toString() : builder.description;
     this.userRating = builder.userRating;
     this.overallRating = builder.overallRating;
     this.artworkData = builder.artworkData;
